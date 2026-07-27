@@ -91,7 +91,7 @@ var UI = (function () {
     }
   };
 
-  function applyScenario(key) {
+  function applyScenario(key, noFly) {
     var sc = SCENARIOS[key];
     if (!sc) return;
     setRange("ctl-rate", sc.set.rate);
@@ -103,7 +103,7 @@ var UI = (function () {
     if (sc.burst) Sim.burst(simRef, sc.burst);
     simRef.log.push({ t: simRef.time, msg: sc.msg });
     if (simRef.log.length > 6) simRef.log.shift();
-    if (onFocus) onFocus(sc.focus, sc.zoom);
+    if (onFocus && !noFly) onFocus(sc.focus, sc.zoom);
   }
 
   function setRange(id, v) {
@@ -197,6 +197,19 @@ var UI = (function () {
     $("anatomy-close").addEventListener("click", function () { toggleOverlay("anatomy-overlay", false); });
 
     showAbout();
+
+    // deep links: ?scenario=stuckoit&theme=day
+    try {
+      var params = new URLSearchParams(location.search);
+      var th = params.get("theme");
+      if (th === "day" || th === "dark") applyTheme(th);
+      var sc = params.get("scenario");
+      if (sc && SCENARIOS[sc]) {
+        $("ctl-scenario").value = sc;
+        applyScenario(sc, true); // stay on the city-wide view
+        els.info.classList.add("hidden");
+      }
+    } catch (e) { }
   }
 
   function bindRange(id, setter, fmt) {

@@ -213,5 +213,18 @@
   UI.init(sim, focusOn);
   resize();
   fitCamera();
+
+  // deep link: ?warp=45 fast-forwards the simulation 45 seconds at load
+  try {
+    var warp = parseInt(new URLSearchParams(location.search).get("warp"), 10);
+    if (warp > 0) {
+      warp = Math.min(warp, 300);
+      for (var wi = 0; wi < warp * 60; wi++) {
+        Sim.tick(sim, 1 / 60);
+        if (wi % 60 === 59) UI.updateStats(sim); // feed the sparklines
+      }
+    }
+  } catch (e) { }
+
   requestAnimationFrame(frame);
 })();

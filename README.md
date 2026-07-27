@@ -67,6 +67,11 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
   and the record version chain.
 - Switch to the **daylight theme** (`D`), pause the world (`space`), or run
   it at 4× speed. Press `?` for all shortcuts.
+- **Deep-link a state**: `?scenario=stuckoit&theme=day&warp=50` applies a
+  scenario (`steady`, `thrash`, `stuckoit`, `locks`, `rush`, `sweepstorm`),
+  picks a theme, and fast-forwards the simulation 50 seconds — handy for
+  sharing a reproducible view (the README screenshot is exactly
+  [this link](https://mariuz.github.io/FBSimCity/?scenario=stuckoit&warp=50)).
 
 ## What it is (and isn't)
 
