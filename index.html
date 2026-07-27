@@ -28,7 +28,9 @@
 </header>
 
 <aside id="controls">
-  <h2>Control room</h2>
+  <h2>Control room
+    <button id="controls-toggle" aria-label="Collapse panel">−</button>
+  </h2>
 
   <div class="ctl">
     <label for="ctl-scenario">Scenario</label>
@@ -97,8 +99,12 @@
   <span class="stat">stale versions <b id="st-vers"></b> <canvas id="sp-vers" width="64" height="18"></canvas></span>
   <span class="stat">lock waits <b id="st-locks"></b></span>
   <span class="stat">rollbacks <b id="st-rb"></b></span>
-  <span class="stat version">v0.2.0</span>
+  <span class="stat version">v0.2.1</span>
 </footer>
+
+<div id="gesture-hint" class="hidden">
+  <b>drag</b> to pan &nbsp;·&nbsp; <b>scroll</b> to zoom &nbsp;·&nbsp; <b>click</b> a building
+</div>
 
 <div id="tour" class="hidden">
   <div class="tour-head">

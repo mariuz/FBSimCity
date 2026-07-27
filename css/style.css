@@ -73,7 +73,25 @@ button.primary:hover { background: rgba(230,120,40,0.55); }
   letter-spacing: 1.5px;
   color: #8fa0d8;
   margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
+#controls-toggle {
+  background: none;
+  border: none;
+  color: #8fa0d8;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+}
+#controls-toggle:hover { color: #fff; background: none; }
+#controls.collapsed .ctl,
+#controls.collapsed .btnrow,
+#controls.collapsed #event-log { display: none; }
+#controls.collapsed { width: auto; }
+#controls.collapsed h2 { margin-bottom: 0; gap: 10px; }
 .ctl { margin-bottom: 10px; }
 .ctl label {
   display: flex;
@@ -307,6 +325,30 @@ table.keys kbd {
 .ver.oldest { border-color: rgba(255,107,107,0.6); background: rgba(255,107,107,0.12); }
 .arrow { text-align: center; color: #8b97c4; font-size: 11px; padding: 3px 0; }
 .chain-col .fine { margin-top: 12px; }
+
+/* ---- first-visit gesture hint ---- */
+#gesture-hint {
+  position: fixed;
+  top: 54%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(16,20,40,0.85);
+  border: 1px solid rgba(130,150,220,0.35);
+  border-radius: 999px;
+  padding: 9px 22px;
+  font-size: 13px;
+  color: #b9c4ec;
+  pointer-events: none;
+  z-index: 9;
+  animation: hint-breathe 2.4s ease-in-out infinite;
+}
+#gesture-hint b { color: #ffd43b; font-weight: 600; }
+@keyframes hint-breathe {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+body.day #gesture-hint { background: rgba(252,253,255,0.9); color: #33406b; }
+body.day #gesture-hint b { color: #b26b00; }
 
 .hidden { display: none !important; }
 

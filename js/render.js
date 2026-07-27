@@ -334,8 +334,10 @@ var Render = (function () {
   function drawLabels(ctx, cam, s, hoverId, selectedId, time) {
     if (cam.zoom < 0.7 && !hoverId && !selectedId) return;
     ctx.textAlign = "center";
+    // labels follow attention: names only when zoomed in enough to read
+    // them, plus whatever the cursor is on
     FB.buildings.forEach(function (b) {
-      var show = cam.zoom >= 0.9 || b.id === hoverId || b.id === selectedId;
+      var show = cam.zoom >= 1.0 || b.id === hoverId || b.id === selectedId;
       if (!show) return;
       var p = proj(cam, b.x + b.w / 2, b.y + b.d / 2, b.h + 0.8);
       ctx.font = "600 " + (11 * Math.min(cam.zoom, 1.15)) + "px 'Segoe UI', sans-serif";

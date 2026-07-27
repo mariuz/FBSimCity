@@ -196,6 +196,40 @@ var UI = (function () {
     $("btn-anatomy").addEventListener("click", function () { toggleOverlay("anatomy-overlay"); });
     $("anatomy-close").addEventListener("click", function () { toggleOverlay("anatomy-overlay", false); });
 
+    // collapsible control room — the city gets the screen back
+    var ctrl = $("controls");
+    var setCollapsed = function (c) {
+      ctrl.classList.toggle("collapsed", c);
+      $("controls-toggle").textContent = c ? "+" : "−";
+      try { localStorage.setItem("fbsimcity-controls", c ? "closed" : "open"); } catch (e) { }
+    };
+    $("controls-toggle").addEventListener("click", function () {
+      setCollapsed(!ctrl.classList.contains("collapsed"));
+    });
+    var savedCtl = null;
+    try { savedCtl = localStorage.getItem("fbsimcity-controls"); } catch (e) { }
+    if (savedCtl === "closed" ||
+        (savedCtl === null && window.innerWidth < 900)) {
+      setCollapsed(true);
+    }
+
+    // first-visit gesture hint, dismissed by the first gesture
+    var hinted = null;
+    try { hinted = localStorage.getItem("fbsimcity-hinted"); } catch (e) { }
+    if (!hinted) {
+      var hint = $("gesture-hint");
+      hint.classList.remove("hidden");
+      var dismiss = function () {
+        hint.classList.add("hidden");
+        try { localStorage.setItem("fbsimcity-hinted", "1"); } catch (e) { }
+        window.removeEventListener("pointerdown", dismiss);
+        window.removeEventListener("wheel", dismiss);
+      };
+      window.addEventListener("pointerdown", dismiss);
+      window.addEventListener("wheel", dismiss);
+      setTimeout(dismiss, 9000);
+    }
+
     showAbout();
 
     // deep links: ?scenario=stuckoit&theme=day

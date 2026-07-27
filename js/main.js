@@ -40,6 +40,25 @@
     cam.oy = ch / 2 - (y0 + y1) / 2 * cam.zoom - 20;
   }
 
+  // The city can never be lost: invert the projection for the screen
+  // center and clamp that world point into the (slightly padded) world
+  // rectangle. The ground occupies exactly the world rect, so whatever
+  // pan or zoom did, there is always city under the screen center.
+  function clampCamera() {
+    var b = FB.bounds, z = cam.zoom;
+    var cx = canvas.clientWidth / 2, cy = canvas.clientHeight / 2;
+    var A = (cx - cam.ox) / (Render.TW * z); // = wx - wy
+    var B = (cy - cam.oy) / (Render.TH * z); // = wx + wy
+    var wx = (A + B) / 2, wy = (B - A) / 2;
+    var px = (b.x1 - b.x0) * 0.1, py = (b.y1 - b.y0) * 0.1;
+    var kx = Math.min(Math.max(wx, b.x0 + px), b.x1 - px);
+    var ky = Math.min(Math.max(wy, b.y0 + py), b.y1 - py);
+    if (kx !== wx || ky !== wy) {
+      cam.ox = cx - (kx - ky) * Render.TW * z;
+      cam.oy = cy - (kx + ky) * Render.TH * z;
+    }
+  }
+
   function focusOn(id, zoom) {
     var b = FB.byId[id];
     if (!b) return;
@@ -197,6 +216,7 @@
         cam.target = null;
       }
     }
+    if (!cam.target) clampCamera();
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     Render.draw(ctx, cam, sim, canvas.clientWidth, canvas.clientHeight,
@@ -227,4 +247,7 @@
   } catch (e) { }
 
   requestAnimationFrame(frame);
+
+  // debug/test hook (not part of the public surface)
+  window.FBDebug = { cam: cam, clampCamera: clampCamera, fitCamera: fitCamera };
 })();
