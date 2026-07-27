@@ -303,6 +303,7 @@ var FB = (function () {
   ];
 
   return {
+    VERSION: "0.2.0",
     buildings: buildings,
     byId: byId,
     stations: stations,

@@ -47,6 +47,13 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
 
 ## Things to try
 
+- **Trace a query** (or press `G`): follow one UPDATE station by station —
+  harbor, Y-valve, lexer, parser, BLR generator, security, compiler,
+  execution, cache (hit or miss, with the detour to disk), lock manager,
+  version towers, commit — with a narrated step mode and a camera that
+  follows the particle.
+- **Pick a scenario** from the control room: steady state, cache thrash,
+  stuck OIT / version bloat, lock contention, rush hour, or sweep storm.
 - **Flip on "Long-running transaction."** The OIT pins, the sweep truck is
   not allowed to demolish anything, and the version towers grow and turn
   red — Firebird's version of bloat. Flip it off and hit **Sweep now**.
@@ -56,6 +63,10 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
   occasional deadlock victim sent home (red particle).
 - **Rush hour ×60** floods the harbor with a burst of queries.
 - Take the **guided tour** for a narrated walk down the pipeline.
+- Open **Page anatomy** (`P`) for a labeled diagram of a Firebird data page
+  and the record version chain.
+- Switch to the **daylight theme** (`D`), pause the world (`space`), or run
+  it at 4× speed. Press `?` for all shortcuts.
 
 ## What it is (and isn't)
 

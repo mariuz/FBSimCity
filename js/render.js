@@ -7,6 +7,43 @@ var Render = (function () {
 
   var TW = 24, TH = 12, TZ = 16; // tile metrics
 
+  var THEMES = {
+    dark: {
+      bgTop: "#0b0e1a", bgBot: "#101528",
+      ground: "#131a2e", groundStroke: "rgba(90,110,160,0.25)",
+      districtStroke: "rgba(140,160,220,0.22)",
+      districtLabel: "rgba(170,185,230,0.5)",
+      road: "rgba(120,140,200,0.18)", roadDash: "rgba(190,205,255,0.14)",
+      pitWallX: "#191233", pitWallY: "#221844", pitFloor: "#160f2e",
+      pitStroke: "rgba(140,120,220,0.3)", pitStripe: "rgba(150,130,240,0.22)",
+      pitLabel: "rgba(190,170,255,0.55)",
+      cacheEmpty: "rgba(60,70,110,0.55)", cacheResident: "rgba(76,110,245,0.55)",
+      labelStrong: "#ffffff", label: "rgba(220,228,255,0.75)",
+      labelDim: "rgba(150,165,215,0.7)",
+      tipOk: "#ffe066", tipBad: "#ff8787", tipAlert: "#ff6b6b"
+    },
+    day: {
+      bgTop: "#dbe4f3", bgBot: "#eef3fb",
+      ground: "#e4eaf5", groundStroke: "rgba(70,90,150,0.3)",
+      districtStroke: "rgba(70,95,170,0.3)",
+      districtLabel: "rgba(45,65,120,0.7)",
+      road: "rgba(70,90,150,0.2)", roadDash: "rgba(35,55,110,0.3)",
+      pitWallX: "#c6cbe6", pitWallY: "#b8bede", pitFloor: "#d3d8ee",
+      pitStroke: "rgba(100,90,190,0.45)", pitStripe: "rgba(100,85,200,0.35)",
+      pitLabel: "rgba(85,70,170,0.85)",
+      cacheEmpty: "rgba(150,160,200,0.5)", cacheResident: "rgba(76,110,245,0.5)",
+      labelStrong: "#141c36", label: "rgba(30,45,90,0.9)",
+      labelDim: "rgba(60,80,140,0.8)",
+      tipOk: "#8a5a00", tipBad: "#b02525", tipAlert: "#c92a2a"
+    }
+  };
+  var T = THEMES.dark;
+  var themeName = "dark";
+
+  function setTheme(name) {
+    if (THEMES[name]) { T = THEMES[name]; themeName = name; }
+  }
+
   function proj(cam, wx, wy, wz) {
     return [
       (wx - wy) * TW * cam.zoom + cam.ox,
@@ -69,8 +106,8 @@ var Render = (function () {
   function drawGround(ctx, cam, cw, ch) {
     // backdrop
     var g = ctx.createLinearGradient(0, 0, 0, ch);
-    g.addColorStop(0, "#0b0e1a");
-    g.addColorStop(1, "#101528");
+    g.addColorStop(0, T.bgTop);
+    g.addColorStop(1, T.bgBot);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, cw, ch);
 
@@ -79,7 +116,7 @@ var Render = (function () {
     poly(ctx, [
       proj(cam, b.x0, b.y0, 0), proj(cam, b.x1, b.y0, 0),
       proj(cam, b.x1, b.y1, 0), proj(cam, b.x0, b.y1, 0)
-    ], "#131a2e", "rgba(90,110,160,0.25)", 1);
+    ], T.ground, T.groundStroke, 1);
 
     // districts
     FB.districts.forEach(function (dz) {
@@ -87,9 +124,9 @@ var Render = (function () {
         proj(cam, dz.x, dz.y, 0), proj(cam, dz.x + dz.w, dz.y, 0),
         proj(cam, dz.x + dz.w, dz.y + dz.d, 0), proj(cam, dz.x, dz.y + dz.d, 0)
       ];
-      poly(ctx, pts, dz.color, "rgba(140,160,220,0.22)", 1);
+      poly(ctx, pts, dz.color, T.districtStroke, 1);
       if (cam.zoom > 0.55) {
-        ctx.fillStyle = "rgba(170,185,230,0.5)";
+        ctx.fillStyle = T.districtLabel;
         ctx.font = (10 * Math.min(cam.zoom, 1.3)) + "px 'Segoe UI', sans-serif";
         var lp = proj(cam, dz.x + 0.4, dz.y + 0.2, 0);
         ctx.fillText(dz.name, lp[0], lp[1] + 12 * cam.zoom);
@@ -97,7 +134,7 @@ var Render = (function () {
     });
 
     // roads
-    ctx.strokeStyle = "rgba(120,140,200,0.18)";
+    ctx.strokeStyle = T.road;
     ctx.lineWidth = Math.max(2, 10 * cam.zoom);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -111,7 +148,7 @@ var Render = (function () {
       ctx.stroke();
     });
     // center dashes
-    ctx.strokeStyle = "rgba(190,205,255,0.14)";
+    ctx.strokeStyle = T.roadDash;
     ctx.lineWidth = Math.max(1, 1.5 * cam.zoom);
     ctx.setLineDash([6 * cam.zoom, 8 * cam.zoom]);
     FB.roads.forEach(function (seq) {
@@ -135,8 +172,8 @@ var Render = (function () {
       var slot = s.cache[i];
       var cx = b.x + 0.8 + (i % cols) * cw;
       var cy = b.y + 0.8 + Math.floor(i / cols) * chh;
-      var fill = "rgba(60,70,110,0.55)";              // empty
-      if (slot.page >= 0) fill = "rgba(76,110,245,0.55)"; // resident
+      var fill = T.cacheEmpty;
+      if (slot.page >= 0) fill = T.cacheResident;
       diamond(ctx, cam, cx, cy, 0.24, fill, null);
       if (slot.flash > 0) {
         var col = slot.state === 2 ? "255,107,107" :
@@ -157,15 +194,15 @@ var Render = (function () {
         c0 = proj(cam, b.x + b.w, b.y + b.d, 0), d0 = proj(cam, b.x, b.y + b.d, 0),
         a1 = proj(cam, b.x, b.y, -depth), b1 = proj(cam, b.x + b.w, b.y, -depth),
         c1 = proj(cam, b.x + b.w, b.y + b.d, -depth), d1 = proj(cam, b.x, b.y + b.d, -depth);
-    poly(ctx, [a0, b0, b1, a1], "#191233");
-    poly(ctx, [a0, d0, d1, a1], "#221844");
-    poly(ctx, [a1, b1, c1, d1], "#160f2e", "rgba(140,120,220,0.3)", 1);
+    poly(ctx, [a0, b0, b1, a1], T.pitWallX);
+    poly(ctx, [a0, d0, d1, a1], T.pitWallY);
+    poly(ctx, [a1, b1, c1, d1], T.pitFloor, T.pitStroke, 1);
     // page stripes on the pit floor
     var stripes = 20;
     for (var i = 0; i < stripes; i++) {
       var fx = b.x + 0.6 + (b.w - 1.2) * (i / stripes);
       var p0 = proj(cam, fx, b.y + 0.5, -depth), p1 = proj(cam, fx, b.y + b.d - 0.5, -depth);
-      ctx.strokeStyle = "rgba(150,130,240,0.22)";
+      ctx.strokeStyle = T.pitStripe;
       ctx.lineWidth = Math.max(1, 3 * cam.zoom);
       ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
     }
@@ -184,7 +221,7 @@ var Render = (function () {
       ctx.restore();
     }
     if (cam.zoom > 0.55) {
-      ctx.fillStyle = "rgba(190,170,255,0.55)";
+      ctx.fillStyle = T.pitLabel;
       ctx.font = (10 * Math.min(cam.zoom, 1.3)) + "px 'Segoe UI', sans-serif";
       var lp = proj(cam, b.x + 0.5, b.y + b.d - 0.4, -depth);
       ctx.fillText("careful writes — no WAL needed", lp[0], lp[1]);
@@ -284,6 +321,13 @@ var Render = (function () {
       ctx.arc(p[0], p[1], r + 3 + Math.sin(time * 8) * 1.5, 0, Math.PI * 2);
       ctx.stroke();
     }
+    if (q.traced) {
+      ctx.strokeStyle = T.labelStrong;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], r + 5 + Math.sin(time * 5) * 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -296,10 +340,10 @@ var Render = (function () {
       var p = proj(cam, b.x + b.w / 2, b.y + b.d / 2, b.h + 0.8);
       ctx.font = "600 " + (11 * Math.min(cam.zoom, 1.15)) + "px 'Segoe UI', sans-serif";
       ctx.fillStyle = (b.id === hoverId || b.id === selectedId) ?
-        "#ffffff" : "rgba(220,228,255,0.75)";
+        T.labelStrong : T.label;
       ctx.fillText(b.name, p[0], p[1]);
       ctx.font = (8.5 * Math.min(cam.zoom, 1.15)) + "px 'Segoe UI', sans-serif";
-      ctx.fillStyle = "rgba(150,165,215,0.7)";
+      ctx.fillStyle = T.labelDim;
       ctx.fillText(b.code, p[0], p[1] + 11 * Math.min(cam.zoom, 1.15));
     });
     // TIP counters over the Transaction Hall
@@ -307,11 +351,11 @@ var Render = (function () {
     var tp = proj(cam, t.x + t.w / 2, t.y + t.d / 2, t.h + 2.2);
     if (cam.zoom >= 0.6) {
       ctx.font = "600 " + (10.5 * Math.min(cam.zoom, 1.2)) + "px Consolas, monospace";
-      ctx.fillStyle = s.pinned !== null ? "#ff8787" : "#ffe066";
+      ctx.fillStyle = s.pinned !== null ? T.tipBad : T.tipOk;
       ctx.fillText("Next " + s.next + "  OAT " + s.oat + "  OIT " + s.oit,
         tp[0], tp[1]);
       if (s.pinned !== null && Math.floor(time * 2) % 2 === 0) {
-        ctx.fillStyle = "#ff6b6b";
+        ctx.fillStyle = T.tipAlert;
         ctx.fillText("OIT PINNED — GC stalled", tp[0], tp[1] - 13 * cam.zoom);
       }
     }
@@ -376,5 +420,9 @@ var Render = (function () {
     drawLabels(ctx, cam, s, hoverId, selectedId, time);
   }
 
-  return { draw: draw, pick: pick, proj: proj, TW: TW, TH: TH, TZ: TZ };
+  return {
+    draw: draw, pick: pick, proj: proj,
+    setTheme: setTheme,
+    TW: TW, TH: TH, TZ: TZ
+  };
 })();

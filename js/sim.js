@@ -45,6 +45,15 @@ var Sim = (function () {
       // sweep
       sweepTimer: 0, sweepActive: false, sweepProgress: 0, sweepBlocked: false,
 
+      // run control
+      paused: false, speed: 1,
+
+      // cache bookkeeping
+      evictions: 0,
+
+      // query trace
+      tracedQ: null, traceStep: true, traceStage: null, traceNote: "",
+
       // disk activity marker for the renderer
       diskFlash: 0, diskPos: 0.5,
 
@@ -78,9 +87,13 @@ var Sim = (function () {
     }
   }
 
-  // Skewed page access — hot pages get most traffic.
+  // Hot/cold page access: most traffic lands on a small working set, like a
+  // real OLTP database. Default cache (64) covers the hot set; shrink it
+  // below HOT_SET and the plaza starts thrashing.
+  var HOT_SET = 40;
   function pickPage() {
-    return Math.floor(Math.pow(Math.random(), 2.8) * PAGE_SPACE);
+    if (Math.random() < 0.88) return Math.floor(Math.random() * HOT_SET);
+    return HOT_SET + Math.floor(Math.random() * (PAGE_SPACE - HOT_SET));
   }
 
   /* returns true on hit; on miss the page is faulted in (LRU eviction) */
@@ -99,6 +112,7 @@ var Sim = (function () {
       s.hits++;
       return true;
     }
+    if (lru.page >= 0) s.evictions++;
     lru.page = page;
     lru.lastUse = s.time;
     lru.flash = 1;
@@ -139,9 +153,9 @@ var Sim = (function () {
     return { x: p.x, y: p.y, dwell: dwell || 0, act: act || null, at: id };
   }
 
-  function spawnQuery(s) {
-    var isUpdate = Math.random() < s.updateRatio;
-    var reads = 1 + Math.floor(Math.random() * 3);
+  function spawnQuery(s, traced) {
+    var isUpdate = traced ? true : Math.random() < s.updateRatio;
+    var reads = traced ? 2 : 1 + Math.floor(Math.random() * 3);
     var path = [
       wp("harbor", 0.05),
       wp("yvalve", 0.12),
@@ -168,10 +182,11 @@ var Sim = (function () {
     var q = {
       x: FB.stations.harbor.x, y: FB.stations.harbor.y,
       path: path, idx: 0, dwell: 0.05,
-      speed: 12 + Math.random() * 5,
+      speed: traced ? 8 : 12 + Math.random() * 5,
       kind: isUpdate ? "update" : "select",
       phase: "sql",           // sql -> blr -> result
       txn: null,
+      traced: !!traced,
       waiting: false,
       dead: false
     };
@@ -181,6 +196,7 @@ var Sim = (function () {
       refreshMarkers(s);
     }
     s.particles.push(q);
+    return q;
   }
 
   function finishTxn(s, q, rolledBack) {
@@ -194,28 +210,37 @@ var Sim = (function () {
 
   function arrive(s, q) {
     var step = q.path[q.idx];
+    if (q.traced) {
+      s.traceStage = step.at;
+      s.traceNote = "";
+    }
     switch (step.act) {
       case "blr":
         q.phase = "blr";
         break;
       case "page":
         if (cacheAccess(s, false)) {
+          if (q.traced) s.traceNote = "hit";
           if (Math.random() < 0.35) coopGC(s);
         } else {
+          if (q.traced) s.traceNote = "miss";
           // miss: detour down to the database file and back
           q.path.splice(q.idx + 1, 0, wp("pio", 0.22), wp("cache", 0.05));
         }
         break;
-      case "wpage":
-        cacheAccess(s, true);
+      case "wpage": {
+        var wHit = cacheAccess(s, true);
+        if (q.traced) s.traceNote = wHit ? "hit" : "miss";
         break;
+      }
       case "lock":
-        // contention: some writers queue at the tower
-        if (Math.random() < 0.22) {
+        // contention: some writers queue at the tower (traced queries are
+        // spared, so the guided walk stays predictable)
+        if (!q.traced && Math.random() < 0.22) {
           q.waiting = true;
           q.dwell += 0.5 + Math.random() * 1.6;
           s.lockWaits++;
-          if (Math.random() < 0.06) {
+          if (Math.random() < 0.06 && !q.traced) {
             // deadlock victim: rollback, go home early
             say(s, "Deadlock scan: txn " + q.txn + " rolled back.");
             finishTxn(s, q, true);
@@ -246,6 +271,8 @@ var Sim = (function () {
         break;
     }
     q.waiting = q.waiting && step.act === "lock";
+    // step mode: a traced query parks at every station until "Next step"
+    if (q.traced && s.traceStep && !q.dead) q.dwell = 1e9;
   }
 
   function moveParticles(s, dt) {
@@ -269,6 +296,45 @@ var Sim = (function () {
       }
     }
     s.particles = s.particles.filter(function (q) { return !q.dead; });
+    if (s.tracedQ && s.tracedQ.dead) {
+      s.tracedQ = null;
+      s.traceStage = null;
+      say(s, "Trace complete — the result made it home.");
+    }
+  }
+
+  // ---- query trace -----------------------------------------------------
+
+  function startTrace(s) {
+    if (s.tracedQ) return;
+    s.tracedQ = spawnQuery(s, true);
+    s.traceStep = true;
+    s.traceStage = "harbor";
+    s.traceNote = "";
+    say(s, "Tracing one UPDATE through the whole pipeline.");
+  }
+
+  function traceNext(s) {
+    if (s.tracedQ && s.tracedQ.dwell > 100) s.tracedQ.dwell = 0.15;
+  }
+
+  function traceAuto(s) {
+    s.traceStep = false;
+    traceNext(s);
+  }
+
+  function tracePause(s) {
+    s.traceStep = true;
+  }
+
+  function endTrace(s) {
+    var q = s.tracedQ;
+    if (q) {
+      q.traced = false;
+      if (q.dwell > 100) q.dwell = 0.1;
+    }
+    s.tracedQ = null;
+    s.traceStage = null;
   }
 
   // ---- sweep -----------------------------------------------------------
@@ -381,6 +447,11 @@ var Sim = (function () {
     setLongTxn: setLongTxn,
     startSweep: startSweep,
     burst: burst,
+    startTrace: startTrace,
+    traceNext: traceNext,
+    traceAuto: traceAuto,
+    tracePause: tracePause,
+    endTrace: endTrace,
     TABLE_COUNT: TABLE_COUNT,
     PAGE_SPACE: PAGE_SPACE
   };

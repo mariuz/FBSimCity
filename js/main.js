@@ -136,6 +136,9 @@
   }, { passive: true });
 
   window.addEventListener("keydown", function (e) {
+    var tag = (e.target && e.target.tagName) || "";
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" ||
+        tag === "BUTTON") return;
     var step = 40;
     if (e.key === "ArrowLeft") cam.ox += step;
     else if (e.key === "ArrowRight") cam.ox -= step;
@@ -143,7 +146,10 @@
     else if (e.key === "ArrowDown") cam.oy -= step;
     else if (e.key === "+" || e.key === "=") cam.zoom = Math.min(2.4, cam.zoom * 1.1);
     else if (e.key === "-") cam.zoom = Math.max(0.3, cam.zoom / 1.1);
-    else return;
+    else {
+      if (UI.handleKey(e.key)) e.preventDefault();
+      return;
+    }
     cam.target = null;
   });
 
@@ -169,7 +175,18 @@
       fitted = true;
     }
 
-    Sim.tick(sim, dt);
+    if (!sim.paused) Sim.tick(sim, dt * sim.speed);
+
+    // camera follows a traced query
+    if (sim.tracedQ && !dragging) {
+      var tq = sim.tracedQ, tz = 1.5;
+      cam.target = {
+        zoom: tz,
+        ox: canvas.clientWidth / 2 - (tq.x - tq.y) * Render.TW * tz,
+        oy: canvas.clientHeight / 2 -
+          ((tq.x + tq.y) * Render.TH - 0.35 * Render.TZ) * tz
+      };
+    }
 
     if (cam.target) {
       var t = cam.target, k = Math.min(1, dt * 5);

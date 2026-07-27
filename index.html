@@ -16,6 +16,12 @@
   <span class="sub">an explorable city of <strong>Firebird</strong> internals</span>
   <nav>
     <button id="btn-tour" class="primary">Guided tour</button>
+    <button id="btn-trace">Trace a query</button>
+    <button id="btn-anatomy">Page anatomy</button>
+    <button id="btn-pause">⏸ Pause</button>
+    <button id="btn-speed">1×</button>
+    <button id="btn-theme">☀ Day</button>
+    <button id="btn-help" title="Keyboard shortcuts">?</button>
     <button id="btn-about">About</button>
     <a class="ghlink" href="https://github.com/mariuz/FBSimCity" target="_blank" rel="noopener">GitHub</a>
   </nav>
@@ -23,6 +29,19 @@
 
 <aside id="controls">
   <h2>Control room</h2>
+
+  <div class="ctl">
+    <label for="ctl-scenario">Scenario</label>
+    <select id="ctl-scenario">
+      <option value="">— pick a scenario —</option>
+      <option value="steady">Steady state</option>
+      <option value="thrash">Cache thrash</option>
+      <option value="stuckoit">Stuck OIT / version bloat</option>
+      <option value="locks">Lock contention</option>
+      <option value="rush">Rush hour</option>
+      <option value="sweepstorm">Sweep storm</option>
+    </select>
+  </div>
 
   <div class="ctl">
     <label for="ctl-rate">Query rate <output id="ctl-rate-val"></output></label>
@@ -68,7 +87,18 @@
   <div id="info-body"></div>
 </aside>
 
-<footer id="stats" aria-live="off"></footer>
+<footer id="stats" aria-live="off">
+  <span class="stat"><b id="st-qps"></b> queries/s <canvas id="sp-qps" width="64" height="18"></canvas></span>
+  <span class="stat">cache hit <b id="st-hit"></b> <canvas id="sp-hit" width="64" height="18"></canvas></span>
+  <span class="stat">evictions <b id="st-evict"></b></span>
+  <span class="stat">Next <b id="st-next"></b></span>
+  <span class="stat">OAT <b id="st-oat"></b></span>
+  <span class="stat">OIT <b id="st-oit"></b> <span id="st-pin" class="bad"></span></span>
+  <span class="stat">stale versions <b id="st-vers"></b> <canvas id="sp-vers" width="64" height="18"></canvas></span>
+  <span class="stat">lock waits <b id="st-locks"></b></span>
+  <span class="stat">rollbacks <b id="st-rb"></b></span>
+  <span class="stat version">v0.2.0</span>
+</footer>
 
 <div id="tour" class="hidden">
   <div class="tour-head">
@@ -80,6 +110,87 @@
   <div class="tour-nav">
     <button id="tour-prev">← Back</button>
     <button id="tour-next" class="primary">Next →</button>
+  </div>
+</div>
+
+<div id="trace-panel" class="hidden">
+  <div class="tour-head">
+    <h3>Query trace</h3>
+    <button id="trace-end" aria-label="End trace">×</button>
+  </div>
+  <h4 id="trace-stage"></h4>
+  <p id="trace-text"></p>
+  <div class="tour-nav">
+    <button id="trace-auto">Auto play</button>
+    <button id="trace-step" class="primary">Next step →</button>
+  </div>
+</div>
+
+<div id="help-overlay" class="overlay hidden">
+  <div class="overlay-box">
+    <button id="help-close" class="overlay-close" aria-label="Close">×</button>
+    <h2>Keyboard &amp; mouse</h2>
+    <table class="keys">
+      <tr><td><kbd>drag</kbd></td><td>pan the city</td></tr>
+      <tr><td><kbd>scroll</kbd> / <kbd>pinch</kbd></td><td>zoom</td></tr>
+      <tr><td><kbd>click</kbd></td><td>building story</td></tr>
+      <tr><td><kbd>←→↑↓</kbd></td><td>pan</td></tr>
+      <tr><td><kbd>+</kbd> / <kbd>−</kbd></td><td>zoom in / out</td></tr>
+      <tr><td><kbd>space</kbd></td><td>pause / resume the simulation</td></tr>
+      <tr><td><kbd>T</kbd></td><td>guided tour</td></tr>
+      <tr><td><kbd>G</kbd></td><td>trace one query, step by step</td></tr>
+      <tr><td><kbd>P</kbd></td><td>data-page anatomy</td></tr>
+      <tr><td><kbd>D</kbd></td><td>day / night theme</td></tr>
+      <tr><td><kbd>?</kbd></td><td>this help</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>close overlays</td></tr>
+    </table>
+  </div>
+</div>
+
+<div id="anatomy-overlay" class="overlay hidden">
+  <div class="overlay-box wide">
+    <button id="anatomy-close" class="overlay-close" aria-label="Close">×</button>
+    <h2>Anatomy of a Firebird data page</h2>
+    <p class="fine">Every table lives on data pages inside the single database
+    file. Record descriptors grow from the top, record data grows from the
+    bottom, and free space sits in between — and every record carries its
+    transaction of origin plus a pointer to its previous version.</p>
+    <div class="anatomy">
+      <div class="page-col">
+        <div class="pg hdr">page header — type=DATA, flags, checksum/SCN, generation</div>
+        <div class="pg hdr2">dpg_sequence · dpg_relation (table id) · dpg_count (records)</div>
+        <div class="pg slot">descriptor[0] — offset, length</div>
+        <div class="pg slot">descriptor[1] — offset, length</div>
+        <div class="pg slot">descriptor[2] — offset, length</div>
+        <div class="pg free">free space<br><span>(descriptors grow ↓ · records grow ↑)</span></div>
+        <div class="pg rec">
+          <span class="rpb">rpb: txn&nbsp;1042 · back&nbsp;version&nbsp;→&nbsp;p118/l3 · flags · format#</span>
+          record 2 — RLE-compressed data
+        </div>
+        <div class="pg rec">
+          <span class="rpb">rpb: txn&nbsp;1017 · back&nbsp;version&nbsp;→&nbsp;none · flags · format#</span>
+          record 1 — RLE-compressed data
+        </div>
+        <div class="pg rec">
+          <span class="rpb">rpb: txn&nbsp;998 · back&nbsp;version&nbsp;→&nbsp;none · flags · format#</span>
+          record 0 — RLE-compressed data
+        </div>
+      </div>
+      <div class="chain-col">
+        <h3>The version chain</h3>
+        <div class="ver newest">newest version<br><span>txn 1042 — what new snapshots see</span></div>
+        <div class="arrow">↓ back pointer (delta)</div>
+        <div class="ver">older version<br><span>txn 981 — still visible to older snapshots</span></div>
+        <div class="arrow">↓ back pointer (delta)</div>
+        <div class="ver oldest">oldest version<br><span>below the OIT — garbage, awaiting GC / sweep</span></div>
+        <p class="fine">A reader walks down the chain until it finds the
+        version its transaction snapshot is allowed to see. Versions below
+        the Oldest Interesting Transaction are demolished by cooperative GC
+        or the sweep. Back versions are stored as deltas, usually on the
+        same page — this is Firebird's multi-generational architecture, and
+        why it needs no rollback segment and no WAL.</p>
+      </div>
+    </div>
   </div>
 </div>
 
