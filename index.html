@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FBSimCity — an explorable city of Firebird internals</title>
+<meta name="description" content="An explorable isometric city that shows how the Firebird relational database actually works: Y-valve, DSQL, JRD, MVCC record versions, OIT/OAT, sweep, page cache and careful writes.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="city"></canvas>
+
+<header id="topbar">
+  <h1>FBSimCity</h1>
+  <span class="sub">an explorable city of <strong>Firebird</strong> internals</span>
+  <nav>
+    <button id="btn-tour" class="primary">Guided tour</button>
+    <button id="btn-about">About</button>
+    <a class="ghlink" href="https://github.com/mariuz/FBSimCity" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+</header>
+
+<aside id="controls">
+  <h2>Control room</h2>
+
+  <div class="ctl">
+    <label for="ctl-rate">Query rate <output id="ctl-rate-val"></output></label>
+    <input type="range" id="ctl-rate" min="0" max="20" step="1" value="6">
+  </div>
+
+  <div class="ctl">
+    <label for="ctl-update">Write mix <output id="ctl-update-val"></output></label>
+    <input type="range" id="ctl-update" min="0" max="100" step="5" value="35">
+  </div>
+
+  <div class="ctl">
+    <label for="ctl-cache">Page cache <output id="ctl-cache-val"></output></label>
+    <input type="range" id="ctl-cache" min="16" max="128" step="16" value="64">
+  </div>
+
+  <div class="ctl">
+    <label for="ctl-sweepint">Sweep interval <output id="ctl-sweepint-val"></output></label>
+    <input type="range" id="ctl-sweepint" min="10" max="60" step="5" value="25">
+  </div>
+
+  <div class="ctl switch">
+    <label><input type="checkbox" id="ctl-sweepon" checked> Automatic sweep</label>
+  </div>
+
+  <div class="ctl switch danger">
+    <label><input type="checkbox" id="ctl-longtxn"> Long-running transaction
+      <span class="hint">pins the OIT — garbage piles up</span></label>
+  </div>
+
+  <div class="btnrow">
+    <button id="btn-sweep">Sweep now</button>
+    <button id="btn-burst">Rush hour ×60</button>
+  </div>
+
+  <div id="event-log" aria-live="polite"></div>
+</aside>
+
+<aside id="info-panel" class="hidden">
+  <button id="info-close" aria-label="Close">×</button>
+  <h2 id="info-title"></h2>
+  <span id="info-code" class="code-chip"></span>
+  <div id="info-body"></div>
+</aside>
+
+<footer id="stats" aria-live="off"></footer>
+
+<div id="tour" class="hidden">
+  <div class="tour-head">
+    <h3 id="tour-title"></h3>
+    <span id="tour-step"></span>
+    <button id="tour-close" aria-label="End tour">×</button>
+  </div>
+  <p id="tour-text"></p>
+  <div class="tour-nav">
+    <button id="tour-prev">← Back</button>
+    <button id="tour-next" class="primary">Next →</button>
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

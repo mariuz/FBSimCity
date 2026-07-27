@@ -1,0 +1,203 @@
+/* FBSimCity — dark neon UI over the isometric canvas. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: #0b0e1a;
+  color: #dce4ff;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+#city {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+/* ---- top bar ---- */
+#topbar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  background: linear-gradient(180deg, rgba(11,14,26,0.92), rgba(11,14,26,0.55) 80%, transparent);
+  pointer-events: none;
+  z-index: 10;
+}
+#topbar h1 {
+  font-size: 20px;
+  letter-spacing: 1px;
+  background: linear-gradient(90deg, #ffa94d, #ff6b6b, #c084fc);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+#topbar .sub { font-size: 12.5px; color: #9aa7d4; }
+#topbar nav { margin-left: auto; display: flex; gap: 8px; pointer-events: auto; }
+
+button, .ghlink {
+  font: 600 12.5px "Segoe UI", sans-serif;
+  color: #dce4ff;
+  background: rgba(40,50,90,0.75);
+  border: 1px solid rgba(130,150,220,0.35);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+button:hover, .ghlink:hover { background: rgba(60,75,130,0.9); border-color: rgba(160,180,255,0.6); }
+button.primary { background: rgba(230,120,40,0.35); border-color: rgba(255,170,80,0.55); }
+button.primary:hover { background: rgba(230,120,40,0.55); }
+
+/* ---- control panel ---- */
+#controls {
+  position: fixed;
+  top: 60px; left: 12px;
+  width: 232px;
+  background: rgba(14,18,34,0.88);
+  border: 1px solid rgba(120,140,210,0.28);
+  border-radius: 10px;
+  padding: 12px 14px;
+  backdrop-filter: blur(6px);
+  z-index: 10;
+}
+#controls h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #8fa0d8;
+  margin-bottom: 10px;
+}
+.ctl { margin-bottom: 10px; }
+.ctl label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #b9c4ec;
+  margin-bottom: 3px;
+  gap: 6px;
+}
+.ctl output { color: #ffd43b; font-weight: 600; white-space: nowrap; }
+.ctl input[type="range"] { width: 100%; accent-color: #ffa94d; }
+.ctl.switch label { display: block; font-size: 12px; cursor: pointer; }
+.ctl.switch input { accent-color: #ffa94d; margin-right: 4px; }
+.ctl.switch .hint { display: block; color: #7d89b8; font-size: 10.5px; margin-left: 20px; }
+.ctl.danger input { accent-color: #ff6b6b; }
+
+.btnrow { display: flex; gap: 8px; margin: 12px 0 8px; }
+.btnrow button { flex: 1; padding: 6px 4px; }
+
+#event-log {
+  border-top: 1px solid rgba(120,140,210,0.2);
+  padding-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #93a1cf;
+  min-height: 54px;
+  max-height: 120px;
+  overflow: hidden;
+}
+#event-log div:first-child { color: #d7e0ff; }
+
+/* ---- info panel ---- */
+#info-panel {
+  position: fixed;
+  top: 60px; right: 12px;
+  width: 300px;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  background: rgba(14,18,34,0.92);
+  border: 1px solid rgba(120,140,210,0.28);
+  border-radius: 10px;
+  padding: 14px 16px;
+  backdrop-filter: blur(6px);
+  z-index: 11;
+}
+#info-panel h2 { font-size: 16px; margin-bottom: 4px; color: #fff; padding-right: 20px; }
+.code-chip {
+  display: inline-block;
+  font: 600 10.5px Consolas, monospace;
+  color: #ffd43b;
+  background: rgba(255,212,59,0.12);
+  border: 1px solid rgba(255,212,59,0.3);
+  border-radius: 4px;
+  padding: 1px 7px;
+  margin-bottom: 8px;
+}
+#info-body { font-size: 12.5px; line-height: 1.55; color: #c3cdf1; }
+#info-body p { margin-bottom: 9px; }
+#info-body a { color: #74c0fc; }
+#info-body .fine { font-size: 11px; color: #8b97c4; }
+#info-close, #tour-close {
+  position: absolute;
+  top: 6px; right: 8px;
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: #8b97c4;
+  padding: 2px 6px;
+}
+#info-close:hover, #tour-close:hover { color: #fff; background: none; }
+
+/* ---- stats bar ---- */
+#stats {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  padding: 8px 16px;
+  background: linear-gradient(0deg, rgba(11,14,26,0.95), rgba(11,14,26,0.6) 80%, transparent);
+  font-size: 12px;
+  color: #9aa7d4;
+  z-index: 10;
+  pointer-events: none;
+}
+#stats b { color: #e8edff; font-weight: 600; }
+#stats .good { color: #69db7c; }
+#stats .warn { color: #ffd43b; }
+#stats .bad { color: #ff8787; }
+
+/* ---- tour ---- */
+#tour {
+  position: fixed;
+  left: 50%;
+  bottom: 46px;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px));
+  background: rgba(16,20,40,0.94);
+  border: 1px solid rgba(255,170,80,0.4);
+  border-radius: 12px;
+  padding: 14px 18px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5), 0 0 24px rgba(255,150,60,0.12);
+  z-index: 12;
+}
+.tour-head { display: flex; align-items: baseline; gap: 10px; padding-right: 24px; }
+#tour h3 { font-size: 15px; color: #ffc078; }
+#tour-step { font-size: 11px; color: #8b97c4; }
+#tour p { font-size: 13px; line-height: 1.55; color: #cdd6f6; margin: 8px 0 10px; }
+.tour-nav { display: flex; justify-content: flex-end; gap: 8px; }
+
+.hidden { display: none !important; }
+
+/* ---- small screens ---- */
+@media (max-width: 900px) {
+  #controls { width: 200px; top: 54px; }
+  #info-panel { width: min(300px, calc(100vw - 24px)); }
+  #topbar .sub { display: none; }
+}
+@media (max-width: 640px) {
+  #controls {
+    top: auto;
+    bottom: 40px;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+  #event-log { display: none; }
+}
