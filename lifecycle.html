@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The life of a query — FBSimCity</title>
+<meta name="description" content="An accessible, text-first walk through every station a statement visits inside the Firebird database engine, from the client to the committed record version and back.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0b0e1a;
+    color: #dce4ff;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+    padding: 32px 16px 64px;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 {
+    font-size: 26px;
+    background: linear-gradient(90deg, #ffa94d, #ff6b6b, #c084fc);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    margin-bottom: 6px;
+  }
+  .lead { color: #9aa7d4; margin-bottom: 8px; }
+  .backlink { display: inline-block; margin-bottom: 26px; color: #74c0fc; }
+  .hint { font-size: 12.5px; color: #6b7aa8; margin-bottom: 18px; }
+  ol.stages { list-style: none; counter-reset: stage; }
+  ol.stages > li {
+    counter-increment: stage;
+    position: relative;
+    border: 1px solid rgba(120,140,210,0.28);
+    border-left: 4px solid var(--accent, #4dabf7);
+    border-radius: 10px;
+    background: rgba(16,20,40,0.75);
+    padding: 14px 18px 14px 58px;
+    margin-bottom: 10px;
+  }
+  ol.stages > li::before {
+    content: counter(stage);
+    position: absolute;
+    left: 16px; top: 14px;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: rgba(77,171,247,0.18);
+    border: 1px solid var(--accent, #4dabf7);
+    color: #dce4ff;
+    font: 600 12px/24px "Segoe UI", sans-serif;
+    text-align: center;
+  }
+  ol.stages > li:focus {
+    outline: 2px solid #ffa94d;
+    outline-offset: 2px;
+  }
+  ol.stages h2 { font-size: 15.5px; margin-bottom: 2px; color: #fff; }
+  ol.stages .code {
+    font: 600 10.5px Consolas, monospace;
+    color: #ffd43b;
+    background: rgba(255,212,59,0.12);
+    border: 1px solid rgba(255,212,59,0.3);
+    border-radius: 4px;
+    padding: 0 6px;
+    margin-left: 6px;
+    vertical-align: 1px;
+  }
+  ol.stages p { font-size: 13.5px; color: #c3cdf1; }
+  .fork {
+    border-left: 4px dashed rgba(148,216,45,0.6) !important;
+  }
+  .fine { font-size: 12px; color: #8b97c4; margin-top: 26px; }
+  .fine a { color: #74c0fc; }
+  @media (prefers-color-scheme: light) {
+    body { background: #eef3fb; color: #1f2947; }
+    ol.stages > li { background: rgba(252,253,255,0.9); border-color: rgba(90,110,180,0.35); }
+    ol.stages > li::before { color: #24304f; }
+    ol.stages h2 { color: #141c36; }
+    ol.stages p { color: #33406b; }
+    .lead { color: #51619b; }
+    .hint, .fine { color: #6b7aa8; }
+    .backlink, .fine a { color: #1971c2; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>The life of a query</h1>
+  <p class="lead">Every station a statement visits inside Firebird, from the
+  client to the committed record version and back — the same journey the
+  particles make in the city, in plain text.</p>
+  <a class="backlink" href="index.html">← back to the city</a>
+  <p class="hint">Use <kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> or arrow keys to
+  move between stations. Everything on this page works without a mouse,
+  a canvas, or JavaScript.</p>
+
+  <ol class="stages">
+    <li tabindex="0" style="--accent:#2a6f97">
+      <h2>Client application <span class="code">REMOTE</span></h2>
+      <p>The statement leaves your program through the client library. The
+      remote layer packages it for the wire — TCP/IP to another machine, or
+      XNET shared memory on the same one.</p>
+    </li>
+    <li tabindex="0" style="--accent:#3d8bfd">
+      <h2>Y-valve dispatch <span class="code">Y-VALVE</span></h2>
+      <p>The Y-valve looks at the connection string and routes the attachment
+      to the right provider: the network redirector, or the embedded
+      in-process engine. Every call in and every result out passes through
+      this gate.</p>
+    </li>
+    <li tabindex="0" style="--accent:#7b6cf6">
+      <h2>Lexer <span class="code">DSQL</span></h2>
+      <p>The lexical analyzer splits the SQL text into tokens — keywords,
+      identifiers, literals, operators.</p>
+    </li>
+    <li tabindex="0" style="--accent:#8b5cf6">
+      <h2>Parser <span class="code">DSQL</span></h2>
+      <p>The parser builds a syntax tree from the token stream, checking the
+      statement is well-formed SQL.</p>
+    </li>
+    <li tabindex="0" style="--accent:#a855f7">
+      <h2>BLR generation <span class="code">DSQL</span></h2>
+      <p>The code generator emits BLR — Binary Language Representation, the
+      engine's native language. From here on the statement no longer speaks
+      SQL. Stored procedures and triggers are kept in BLR form too.</p>
+    </li>
+    <li tabindex="0" style="--accent:#f59f00">
+      <h2>Security check <span class="code">SCL</span></h2>
+      <p>The attachment was authenticated against the security database when
+      it connected; now SQL privileges and ACLs are enforced on every object
+      the statement touches.</p>
+    </li>
+    <li tabindex="0" style="--accent:#12b886">
+      <h2>Compile &amp; optimize <span class="code">CMP + MET</span></h2>
+      <p>The compiler turns BLR into an executable request tree, resolving
+      tables and columns against the metadata subsystem (the RDB$ system
+      tables). The optimizer picks indexes and join order from selectivity
+      and cardinality estimates.</p>
+    </li>
+    <li tabindex="0" style="--accent:#40c057">
+      <h2>Execution <span class="code">EXE</span></h2>
+      <p>The heart of JRD interprets the request tree, pulling rows through
+      record streams and coordinating every subsystem below.</p>
+    </li>
+    <li tabindex="0" class="fork" style="--accent:#63e6be">
+      <h2>Index walk — when one fits <span class="code">BTR</span></h2>
+      <p>If the optimizer chose an index, the B-tree subsystem walks
+      prefix-compressed keys down to matching record numbers instead of
+      scanning the table.</p>
+    </li>
+    <li tabindex="0" class="fork" style="--accent:#94d82d">
+      <h2>Sort — when no index gives the order <span class="code">SORT</span></h2>
+      <p>ORDER BY, GROUP BY and DISTINCT without a helpful index go through
+      the external merge sort: sorted runs in memory, spilled and merged
+      through temporary files when they outgrow it.</p>
+    </li>
+    <li tabindex="0" style="--accent:#4c6ef5">
+      <h2>Page cache <span class="code">CCH</span></h2>
+      <p>Every page the engine touches goes through the shared buffer cache.
+      A hit costs nothing; a miss means physical I/O against the database
+      file — and evicting the least-recently-used buffer if the cache is
+      full.</p>
+    </li>
+    <li tabindex="0" style="--accent:#5f3dc4">
+      <h2>The database file <span class="code">PIO</span></h2>
+      <p>The physical I/O layer reads and writes pages of the single
+      database file. There is no write-ahead log: careful write ordering
+      keeps the on-disk structure consistent at every instant — a page is
+      never written before the pages it points to exist.</p>
+    </li>
+    <li tabindex="0" style="--accent:#ff6b6b">
+      <h2>Locking — writers only <span class="code">LOCK</span></h2>
+      <p>Before modifying, the engine takes a lock in the shared-memory lock
+      table that coordinates all attachments (and, in Classic mode, all
+      processes). Contending writers queue; the deadlock scanner picks a
+      victim when two queues form a cycle.</p>
+    </li>
+    <li tabindex="0" style="--accent:#4dabf7">
+      <h2>A new record version <span class="code">VIO</span></h2>
+      <p>An UPDATE never overwrites the row. It writes a new version and
+      chains the old one behind it as a backward delta. Readers walk the
+      chain to the version their transaction snapshot may see — readers
+      never block writers. Old versions below the Oldest Interesting
+      Transaction become garbage for cooperative GC or the sweep.</p>
+    </li>
+    <li tabindex="0" style="--accent:#fcc419">
+      <h2>Commit <span class="code">TRA</span></h2>
+      <p>The transaction's state bits flip on a Transaction Inventory Page.
+      No redo log, no undo log — the version chains and the TIP are the
+      whole story. The new version is now the committed truth.</p>
+    </li>
+    <li tabindex="0" style="--accent:#2a6f97">
+      <h2>Results sail home <span class="code">REMOTE</span></h2>
+      <p>Rows are batched back through the Y-valve and the wire protocol to
+      the client that asked. In the city, this is the green particle
+      returning to the harbor.</p>
+    </li>
+  </ol>
+
+  <p class="fine">Part of <a href="index.html">FBSimCity</a> — an explorable
+  city of Firebird internals. Subsystem structure from
+  <a href="https://github.com/mariuz/conceptual-architecture-for-firebird-paper">Conceptual
+  Architecture for Firebird</a> (Chan &amp; Yashkir). FBSimCity is an
+  independent educational project, not affiliated with or endorsed by the
+  Firebird Project. Firebird&reg; is a registered trademark of the Firebird
+  Foundation Incorporated.</p>
+</main>
+<script>
+  // arrow-key navigation between stations (Tab already works natively)
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    var items = Array.prototype.slice.call(document.querySelectorAll("ol.stages > li"));
+    var idx = items.indexOf(document.activeElement);
+    var next = e.key === "ArrowDown" ? Math.min(items.length - 1, idx + 1)
+                                     : Math.max(0, idx - 1);
+    items[next].focus();
+    e.preventDefault();
+  });
+</script>
+</body>
+</html>

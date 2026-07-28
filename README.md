@@ -65,6 +65,12 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
 - Take the **guided tour** for a narrated walk down the pipeline.
 - Open **Page anatomy** (`P`) for a labeled diagram of a Firebird data page
   and the record version chain.
+- **Click the Record Version Towers** to open the live chain inspector: the
+  busiest table's versions with their writing transaction ids, marked
+  reachable or garbage against the live OIT.
+- Prefer text? **[The life of a query](https://mariuz.github.io/FBSimCity/lifecycle.html)**
+  is the same journey as an accessible, keyboard-navigable page — no canvas,
+  works with a screen reader.
 - Switch to the **daylight theme** (`D`), pause the world (`space`), or run
   it at 4× speed. Press `?` for all shortcuts.
 - **Deep-link a state**: `?scenario=stuckoit&theme=day&warp=50` applies a
@@ -119,3 +125,7 @@ then open <http://localhost:8000/>.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+FBSimCity is an independent educational project and is not affiliated with
+or endorsed by the Firebird Project. Firebird® is a registered trademark of
+the Firebird Foundation Incorporated.

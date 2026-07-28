@@ -326,6 +326,57 @@ table.keys kbd {
 .arrow { text-align: center; color: #8b97c4; font-size: 11px; padding: 3px 0; }
 .chain-col .fine { margin-top: 12px; }
 
+/* ---- close-range "you are here" chip ---- */
+#whereami {
+  position: fixed;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(16,20,40,0.88);
+  border: 1px solid rgba(255,212,59,0.4);
+  border-radius: 999px;
+  padding: 5px 16px;
+  font-size: 12.5px;
+  color: #ffd43b;
+  pointer-events: none;
+  z-index: 9;
+}
+body.day #whereami { background: rgba(252,253,255,0.92); color: #8a5a00; border-color: rgba(210,120,30,0.5); }
+
+/* ---- live version-chain inspector ---- */
+#chain-live h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #74c0fc;
+  margin: 10px 0 6px;
+}
+.chainrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+  color: #9aa7d4;
+  border-left: 3px solid rgba(120,140,210,0.4);
+  padding: 3px 8px;
+  margin-bottom: 3px;
+  border-radius: 0 5px 5px 0;
+  background: rgba(40,50,90,0.35);
+}
+.chainrow span {
+  font: 600 11px Consolas, monospace;
+  color: #dce4ff;
+  white-space: nowrap;
+}
+.chainrow.ver-new { border-left-color: #69db7c; background: rgba(105,219,124,0.12); }
+.chainrow.ver-ok { border-left-color: #4dabf7; }
+.chainrow.ver-dead { border-left-color: #ff6b6b; background: rgba(255,107,107,0.10); color: #d59a9a; }
+.chainrow.more { border-left-style: dashed; font-style: italic; }
+body.day .chainrow { background: rgba(220,228,248,0.5); color: #51619b; }
+body.day .chainrow span { color: #24304f; }
+body.day .chainrow.ver-new { background: rgba(43,138,62,0.12); }
+body.day .chainrow.ver-dead { background: rgba(201,42,42,0.10); color: #a05252; }
+
 /* ---- first-visit gesture hint ---- */
 #gesture-hint {
   position: fixed;

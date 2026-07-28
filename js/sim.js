@@ -66,7 +66,10 @@ var Sim = (function () {
       log: []
     };
     for (var i = 0; i < TABLE_COUNT; i++) {
-      s.tables.push({ versions: 1, flash: 0 });
+      // chain[0] is the oldest version, chain[last] the current one;
+      // each entry is the id of the transaction that wrote it (seeds sit
+      // well below the initial markers, like rows loaded long ago)
+      s.tables.push({ versions: 1, flash: 0, chain: [960 + i] });
     }
     setCacheSize(s, s.cacheSize);
     say(s, "Database on line. Cache " + s.cacheSize + " pages, sweep every " +
@@ -140,6 +143,7 @@ var Sim = (function () {
     if (s.pinned !== null) return;
     var t = s.tables[Math.floor(Math.random() * TABLE_COUNT)];
     if (t.versions > 1) {
+      t.chain.shift();
       t.versions--;
       s.totalVersions--;
       t.flash = 0.6;
@@ -253,6 +257,7 @@ var Sim = (function () {
       case "version": {
         var t = s.tables[Math.floor(Math.random() * TABLE_COUNT)];
         if (t.versions < MAX_CHAIN) {
+          t.chain.push(q.txn);
           t.versions++;
           s.totalVersions++;
         }
@@ -367,6 +372,7 @@ var Sim = (function () {
       var t = s.tables[i];
       if (t.versions > 1) {
         s.totalVersions -= (t.versions - 1);
+        t.chain = [t.chain[t.chain.length - 1]];
         t.versions = 1;
         t.flash = 1;
       }

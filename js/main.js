@@ -6,6 +6,11 @@
   var ctx = canvas.getContext("2d");
   var sim = Sim.create();
 
+  // single source of truth for camera range — zoom-related disorientation
+  // has one set of numbers to blame
+  var ZOOM_MIN = 0.3, ZOOM_MAX = 2.4, ZOOM_FIT_MAX = 1.6;
+  var WHEREAMI_ZOOM = 1.45; // identify the building at screen center from here in
+
   var cam = { ox: 0, oy: 0, zoom: 1, target: null };
   var hoverId = null, selectedId = null;
   var dragging = false, dragMoved = false;
@@ -35,7 +40,7 @@
     var cw = canvas.clientWidth, ch = canvas.clientHeight;
     var pad = 60;
     var z = Math.min((cw - pad) / (x1 - x0), (ch - pad) / (y1 - y0));
-    cam.zoom = Math.max(0.3, Math.min(z, 1.6));
+    cam.zoom = Math.max(ZOOM_MIN, Math.min(z, ZOOM_FIT_MAX));
     cam.ox = cw / 2 - (x0 + x1) / 2 * cam.zoom;
     cam.oy = ch / 2 - (y0 + y1) / 2 * cam.zoom - 20;
   }
@@ -108,7 +113,7 @@
     var r = canvas.getBoundingClientRect();
     var mx = e.clientX - r.left, my = e.clientY - r.top;
     var f = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    var nz = Math.max(0.3, Math.min(2.4, cam.zoom * f));
+    var nz = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cam.zoom * f));
     f = nz / cam.zoom;
     cam.ox = mx - (mx - cam.ox) * f;
     cam.oy = my - (my - cam.oy) * f;
@@ -141,7 +146,7 @@
         var d0 = Math.hypot(pa.x - pb.x, pa.y - pb.y);
         var d1 = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
         if (d0 > 0) {
-          cam.zoom = Math.max(0.3, Math.min(2.4, cam.zoom * (d1 / d0)));
+          cam.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cam.zoom * (d1 / d0)));
         }
         pa.x = a.clientX; pa.y = a.clientY;
         pb.x = b.clientX; pb.y = b.clientY;
@@ -163,8 +168,8 @@
     else if (e.key === "ArrowRight") cam.ox -= step;
     else if (e.key === "ArrowUp") cam.oy += step;
     else if (e.key === "ArrowDown") cam.oy -= step;
-    else if (e.key === "+" || e.key === "=") cam.zoom = Math.min(2.4, cam.zoom * 1.1);
-    else if (e.key === "-") cam.zoom = Math.max(0.3, cam.zoom / 1.1);
+    else if (e.key === "+" || e.key === "=") cam.zoom = Math.min(ZOOM_MAX, cam.zoom * 1.1);
+    else if (e.key === "-") cam.zoom = Math.max(ZOOM_MIN, cam.zoom / 1.1);
     else {
       if (UI.handleKey(e.key)) e.preventDefault();
       return;
@@ -225,9 +230,36 @@
     statTick += dt;
     if (statTick > 0.25) {
       UI.updateStats(sim);
+      updateWhereAmI();
       statTick = 0;
     }
     requestAnimationFrame(frame);
+  }
+
+  // close-range orientation: name the building nearest the screen center
+  var whereEl = document.getElementById("whereami");
+
+  function updateWhereAmI() {
+    if (cam.zoom < WHEREAMI_ZOOM) {
+      whereEl.classList.add("hidden");
+      return;
+    }
+    var z = cam.zoom;
+    var A = (canvas.clientWidth / 2 - cam.ox) / (Render.TW * z);
+    var B = (canvas.clientHeight / 2 - cam.oy) / (Render.TH * z);
+    var wx = (A + B) / 2, wy = (B - A) / 2;
+    var best = null, bestD = 49; // within 7 world units
+    FB.buildings.forEach(function (b) {
+      var dx = b.x + b.w / 2 - wx, dy = b.y + b.d / 2 - wy;
+      var d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = b; }
+    });
+    if (best) {
+      whereEl.textContent = "You are at: " + best.name + " · " + best.code;
+      whereEl.classList.remove("hidden");
+    } else {
+      whereEl.classList.add("hidden");
+    }
   }
 
   UI.init(sim, focusOn);

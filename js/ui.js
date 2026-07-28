@@ -168,6 +168,7 @@ var UI = (function () {
     $("tour-close").addEventListener("click", function () { endTour(); });
     $("info-close").addEventListener("click", function () {
       els.info.classList.add("hidden");
+      infoSelectedId = null;
     });
     $("btn-about").addEventListener("click", function () { showAbout(); });
 
@@ -330,17 +331,55 @@ var UI = (function () {
 
   // ---- info panel ------------------------------------------------------
 
+  var infoSelectedId = null;
+
   function showBuilding(id) {
     var b = FB.byId[id];
     if (!b) return;
+    infoSelectedId = id;
     els.infoTitle.textContent = b.name;
     els.infoCode.textContent = b.code;
     els.infoCode.style.display = "";
-    els.infoBody.innerHTML = "<p>" + b.desc + "</p>";
+    els.infoBody.innerHTML = "<p>" + b.desc + "</p>" +
+      (id === "mvcc" ? "<div id='chain-live'></div>" : "");
+    if (id === "mvcc") renderChain(simRef);
     els.info.classList.remove("hidden");
   }
 
+  // live version-chain inspector: the busiest table's chain, with each
+  // version's writing transaction and its visibility against the OIT
+  function renderChain(s) {
+    var el = $("chain-live");
+    if (!el) return;
+    var t = s.tables[0];
+    for (var i = 1; i < s.tables.length; i++) {
+      if (s.tables[i].chain.length > t.chain.length) t = s.tables[i];
+    }
+    var html = "<h3>Busiest table — live version chain</h3>";
+    var chain = t.chain, shown = Math.min(chain.length, 10);
+    for (var j = 0; j < shown; j++) {
+      var idx = chain.length - 1 - j; // newest first
+      var txn = chain[idx];
+      var cls, label;
+      if (j === 0) { cls = "ver-new"; label = "current version"; }
+      else if (txn < s.oit) { cls = "ver-dead"; label = "garbage — below OIT " + s.oit; }
+      else { cls = "ver-ok"; label = "kept for snapshots ≥ txn " + txn; }
+      html += "<div class='chainrow " + cls + "'><span>txn " + txn +
+        "</span>" + label + "</div>";
+    }
+    if (chain.length > shown) {
+      html += "<div class='chainrow more'>… " + (chain.length - shown) +
+        " older version" + (chain.length - shown > 1 ? "s" : "") + "</div>";
+    }
+    if (chain.length === 1) {
+      html += "<p class='fine'>One version — nothing for GC to do. Raise the " +
+        "write mix or pin the OIT and watch the chain grow.</p>";
+    }
+    el.innerHTML = html;
+  }
+
   function showAbout() {
+    infoSelectedId = null;
     els.infoTitle.textContent = "FBSimCity";
     els.infoCode.textContent = "";
     els.infoCode.style.display = "none";
@@ -362,7 +401,10 @@ var UI = (function () {
       "(Chan &amp; Yashkir, Univ. of Waterloo; extended by Popa Adrian Marius). " +
       "Inspired by <a href='https://github.com/NikolayS/PGSimCity' " +
       "target='_blank' rel='noopener'>PGSimCity</a>. This is a scaled model " +
-      "for intuition, not an emulator.</p>";
+      "for intuition, not an emulator.</p>" +
+      "<p class='fine'>FBSimCity is an independent educational project, not " +
+      "affiliated with or endorsed by the Firebird Project. Firebird&reg; is " +
+      "a registered trademark of the Firebird Foundation Incorporated.</p>";
     els.info.classList.remove("hidden");
   }
 
@@ -475,6 +517,10 @@ var UI = (function () {
       html += "<div>" + s.log[i].msg + "</div>";
     }
     els.log.innerHTML = html;
+
+    if (infoSelectedId === "mvcc" && !els.info.classList.contains("hidden")) {
+      renderChain(s);
+    }
 
     updateTrace();
   }
