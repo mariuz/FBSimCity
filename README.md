@@ -4,7 +4,7 @@
 
 🔗 **Live: [mariuz.github.io/FBSimCity](https://mariuz.github.io/FBSimCity/)**
 
-![FBSimCity — a long-running transaction has pinned the OIT and the record version towers are growing](docs/screenshot.png)
+![FBSimCity — a long-running transaction has pinned the OIT, the record version towers are growing, and the live chain inspector shows the busiest table's versions with their writing transactions](docs/screenshot.png)
 
 FBSimCity is an interactive isometric city where every building is a real
 Firebird subsystem and every glowing particle is a query making its commute:
@@ -73,11 +73,12 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
   works with a screen reader.
 - Switch to the **daylight theme** (`D`), pause the world (`space`), or run
   it at 4× speed. Press `?` for all shortcuts.
-- **Deep-link a state**: `?scenario=stuckoit&theme=day&warp=50` applies a
-  scenario (`steady`, `thrash`, `stuckoit`, `locks`, `rush`, `sweepstorm`),
-  picks a theme, and fast-forwards the simulation 50 seconds — handy for
-  sharing a reproducible view (the README screenshot is exactly
-  [this link](https://mariuz.github.io/FBSimCity/?scenario=stuckoit&warp=50)).
+- **Deep-link a state**: `?scenario=stuckoit&theme=day&warp=50&panel=mvcc`
+  applies a scenario (`steady`, `thrash`, `stuckoit`, `locks`, `rush`,
+  `sweepstorm`), picks a theme, fast-forwards the simulation 50 seconds and
+  opens a building's info panel — handy for sharing a reproducible view (the
+  README screenshot is exactly
+  [this link](https://mariuz.github.io/FBSimCity/?scenario=stuckoit&warp=50&panel=mvcc)).
 
 ## What it is (and isn't)
 

@@ -244,6 +244,8 @@ var UI = (function () {
         applyScenario(sc, true); // stay on the city-wide view
         els.info.classList.add("hidden");
       }
+      var pn = params.get("panel");
+      if (pn && FB.byId[pn]) showBuilding(pn);
     } catch (e) { }
   }
 
