@@ -49,7 +49,17 @@ var Sim = (function () {
       paused: false, speed: 1,
 
       // cache bookkeeping
-      evictions: 0,
+      evictions: 0, dirtyEvictions: 0, pageWrites: 0,
+
+      // backup & recovery (gbak logical dump, nbackup physical levels)
+      backup: {
+        gbakActive: false, gbakProgress: 0, gbakTxn: null, gbakRuns: 0,
+        nbActive: false, nbProgress: 0, nbLevel: 0,
+        levels: [],            // completed nbackup levels: {level, at, pages}
+        locked: false,         // nbackup -L: main file frozen
+        deltaPages: 0, deltaFlash: 0,
+        merging: false, mergeProgress: 0, mergeFrom: 0
+      },
 
       // query trace
       tracedQ: null, traceStep: true, traceStage: null, traceNote: "",
@@ -86,7 +96,8 @@ var Sim = (function () {
     s.cacheSize = n;
     s.cache = [];
     for (var i = 0; i < n; i++) {
-      s.cache.push({ page: -1, lastUse: 0, flash: 0, state: 0 }); // 0 empty
+      // state drives the flash colour only; `dirty` is the real bookkeeping
+      s.cache.push({ page: -1, lastUse: 0, flash: 0, state: 0, dirty: false });
     }
   }
 
@@ -112,18 +123,59 @@ var Sim = (function () {
       slot.lastUse = s.time;
       slot.flash = 1;
       slot.state = isWrite ? 3 : 1; // 1 hit, 3 dirty
+      if (isWrite) slot.dirty = true;
       s.hits++;
       return true;
     }
-    if (lru.page >= 0) s.evictions++;
+    if (lru.page >= 0) {
+      s.evictions++;
+      // Evicting a DIRTY buffer is not free: the page must be written out
+      // before its frame can be reused, so the reader pays for someone
+      // else's write. This is where "my SELECT got slow" often comes from.
+      if (lru.dirty) {
+        s.dirtyEvictions++;
+        pageWrite(s, lru.page);
+      }
+    }
     lru.page = page;
     lru.lastUse = s.time;
     lru.flash = 1;
     lru.state = 2; // miss / freshly faulted
+    // faulting a page in to modify it leaves it dirty straight away
+    lru.dirty = !!isWrite;
     s.misses++;
     s.diskFlash = 1;
     s.diskPos = page / PAGE_SPACE;
     return false;
+  }
+
+  /* Forced writes (the Firebird default): a commit does not return until its
+   * pages are safely on disk, so committing cleans buffers as it goes. This
+   * is what keeps most evictions cheap on a healthy database. */
+  function flushDirty(s, n) {
+    for (var i = 0; i < s.cache.length && n > 0; i++) {
+      var c = s.cache[i];
+      if (c.dirty) {
+        c.dirty = false;
+        pageWrite(s, c.page);
+        n--;
+      }
+    }
+  }
+
+  /* A page leaves the cache for durable storage. While nbackup holds the
+   * database locked, the main file is frozen and the write is diverted into
+   * the difference (delta) file instead. */
+  function pageWrite(s, page) {
+    var b = s.backup;
+    if (b.locked) {
+      b.deltaPages++;
+      b.deltaFlash = 1;
+    } else {
+      s.diskFlash = 1;
+      s.diskPos = page / PAGE_SPACE;
+      s.pageWrites++;
+    }
   }
 
   function oldestVisible(s) {
@@ -131,16 +183,28 @@ var Sim = (function () {
     return s.pinned !== null ? s.pinned : s.next;
   }
 
+  /* The oldest transaction still holding the markers back. Either the
+   * user's forgotten transaction or gbak's snapshot read — a logical backup
+   * of a busy database holds back GC for as long as it runs, which is why
+   * a nightly gbak and a bloating database are often the same story. */
+  function holder(s) {
+    var g = s.backup.gbakTxn;
+    if (s.pinned !== null && g !== null) return Math.min(s.pinned, g);
+    if (s.pinned !== null) return s.pinned;
+    return g; // null when nothing is holding
+  }
+
   function refreshMarkers(s) {
     var floor = s.active.length ? Math.min.apply(null, s.active) : s.next;
-    s.oat = s.pinned !== null ? Math.min(s.pinned, floor) : floor;
+    var h = holder(s);
+    s.oat = h !== null ? Math.min(h, floor) : floor;
     // OIT trails OAT; a pinned txn freezes it hard.
-    s.oit = s.pinned !== null ? s.pinned : s.oat;
+    s.oit = h !== null ? h : s.oat;
   }
 
   function coopGC(s) {
     // a reader tidies one chain it walked through, if allowed
-    if (s.pinned !== null) return;
+    if (holder(s) !== null) return;
     var t = s.tables[Math.floor(Math.random() * TABLE_COUNT)];
     if (t.versions > 1) {
       t.chain.shift();
@@ -266,6 +330,10 @@ var Sim = (function () {
       }
       case "commit":
         finishTxn(s, q, false);
+        // Forced writes: this update dirtied one page, so its commit takes
+        // one page to disk. Dirty evictions stay rare on a healthy database
+        // for exactly this reason — the cost lands at commit instead.
+        flushDirty(s, 1);
         break;
       case "result":
         if (q.phase !== "rollback") q.phase = "result";
@@ -346,10 +414,12 @@ var Sim = (function () {
 
   function startSweep(s, manual) {
     if (s.sweepActive) return;
-    if (s.pinned !== null) {
+    if (holder(s) !== null) {
       s.sweepBlocked = true;
-      say(s, manual ? "Sweep requested — but the OIT is pinned; nothing to do."
-        : "Sweep skipped: long-running transaction pins the OIT.");
+      var why = s.pinned !== null ? "long-running transaction"
+                                  : "gbak's snapshot";
+      say(s, manual ? "Sweep requested — but " + why + " pins the OIT."
+        : "Sweep skipped: " + why + " pins the OIT.");
       return;
     }
     s.sweepBlocked = false;
@@ -381,6 +451,129 @@ var Sim = (function () {
       s.sweepActive = false;
       say(s, "Sweep finished. City is clean.");
     }
+  }
+
+  // ---- backup & recovery -----------------------------------------------
+  //
+  // Two very different tools, both real Firebird:
+  //   gbak    — logical dump through a normal attachment. Runs online, but
+  //             its snapshot transaction pins the OIT for the whole run.
+  //   nbackup — physical, incremental by level. Level 0 is the whole file;
+  //             each higher level copies only pages changed since the level
+  //             below. Locking the database freezes the main file and sends
+  //             new page writes to a difference (delta) file, which is
+  //             merged back on unlock.
+
+  function startGbak(s) {
+    var b = s.backup;
+    if (b.gbakActive) return;
+    b.gbakActive = true;
+    b.gbakProgress = 0;
+    b.gbakTxn = s.next++;
+    refreshMarkers(s);
+    say(s, "gbak started — snapshot txn " + b.gbakTxn +
+      " now pins the OIT until it finishes.");
+  }
+
+  function tickGbak(s, dt) {
+    var b = s.backup;
+    if (!b.gbakActive) return;
+    b.gbakProgress += dt / 12; // a 12-second dump
+    // reading every page of the database evicts the working set as it goes
+    if (Math.random() < dt * 6) cacheAccess(s, false);
+    if (b.gbakProgress >= 1) {
+      b.gbakActive = false;
+      b.gbakProgress = 0;
+      b.gbakTxn = null;
+      b.gbakRuns++;
+      refreshMarkers(s);
+      say(s, "gbak finished. Snapshot released — the OIT can advance again.");
+    }
+  }
+
+  function startNbackup(s, level) {
+    var b = s.backup;
+    if (b.nbActive || b.merging) return;
+    if (level > 0 && !b.levels.some(function (l) { return l.level === level - 1; })) {
+      say(s, "nbackup level " + level + " needs a level " + (level - 1) +
+        " first — the chain has to start somewhere.");
+      return;
+    }
+    b.nbActive = true;
+    b.nbProgress = 0;
+    b.nbLevel = level;
+    b.locked = true;      // -L : freeze the main file, divert writes to delta
+    say(s, "nbackup level " + level + " — database locked, writes now go to " +
+      "the delta file.");
+  }
+
+  function tickNbackup(s, dt) {
+    var b = s.backup;
+    if (b.nbActive) {
+      // level 0 copies the whole file; higher levels only changed pages
+      b.nbProgress += dt / (b.nbLevel === 0 ? 8 : 3);
+      if (b.nbProgress >= 1) {
+        var pages = b.nbLevel === 0 ? PAGE_SPACE
+          : Math.max(1, Math.round(b.deltaPages + 20 + Math.random() * 40));
+        b.levels = b.levels.filter(function (l) { return l.level < b.nbLevel; });
+        b.levels.push({ level: b.nbLevel, at: Math.round(s.time), pages: pages });
+        b.nbActive = false;
+        b.nbProgress = 0;
+        say(s, "nbackup level " + b.nbLevel + " copied " + pages +
+          " pages. Unlocking and merging the delta back.");
+        unlockNbackup(s);
+      }
+    }
+    if (b.merging) {
+      b.mergeProgress += dt / 2.5;
+      b.deltaPages = Math.round(b.mergeFrom * (1 - Math.min(1, b.mergeProgress)));
+      if (b.deltaPages > 0 && Math.random() < dt * 8) {
+        s.diskFlash = 1;
+        s.diskPos = Math.random();
+      }
+      if (b.mergeProgress >= 1) {
+        b.merging = false;
+        b.deltaPages = 0;
+        say(s, "Delta merged into the database file. Main file live again.");
+      }
+    }
+    if (b.deltaFlash > 0) b.deltaFlash -= dt * 2.2;
+  }
+
+  function lockNbackup(s) {
+    var b = s.backup;
+    if (b.locked || b.merging) return;
+    b.locked = true;
+    say(s, "Database locked (nbackup -L). The main file is frozen; every " +
+      "new page write lands in the delta file.");
+  }
+
+  function unlockNbackup(s) {
+    var b = s.backup;
+    if (!b.locked) return;
+    b.locked = false;
+    if (b.deltaPages > 0) {
+      b.merging = true;
+      b.mergeProgress = 0;
+      b.mergeFrom = b.deltaPages;
+    }
+  }
+
+  function toggleLock(s) {
+    if (s.backup.locked) unlockNbackup(s); else lockNbackup(s);
+  }
+
+  function restoreChain(s) {
+    var b = s.backup;
+    if (!b.levels.length) {
+      say(s, "Nothing to restore — run an nbackup level 0 first.");
+      return;
+    }
+    var chain = b.levels.slice().sort(function (x, y) { return x.level - y.level; });
+    var total = chain.reduce(function (a, l) { return a + l.pages; }, 0);
+    say(s, "Restore would apply " + chain.map(function (l) {
+      return "L" + l.level;
+    }).join(" → ") + " in order — " + total + " pages.");
   }
 
   // ---- public API ------------------------------------------------------
@@ -421,6 +614,8 @@ var Sim = (function () {
 
     moveParticles(s, dt);
     tickSweep(s, dt);
+    tickGbak(s, dt);
+    tickNbackup(s, dt);
 
     // decay flashes
     var i;
@@ -458,6 +653,10 @@ var Sim = (function () {
     traceAuto: traceAuto,
     tracePause: tracePause,
     endTrace: endTrace,
+    startGbak: startGbak,
+    startNbackup: startNbackup,
+    toggleLock: toggleLock,
+    restoreChain: restoreChain,
     TABLE_COUNT: TABLE_COUNT,
     PAGE_SPACE: PAGE_SPACE
   };

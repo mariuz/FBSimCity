@@ -169,6 +169,43 @@ var FB = (function () {
         "control panel and watch the hit ratio move."
     },
     {
+      id: "delta", code: "DELTA", name: "Difference File",
+      x: 41, y: 34, w: 5.5, d: 6, h: 0, color: "#e8590c",
+      short: "Where writes go while nbackup holds the database locked.",
+      desc: "When nbackup locks the database (nbackup -L), the main file is " +
+        "frozen so it can be copied safely while the server keeps running. " +
+        "Every page written from that moment lands here in the difference " +
+        "file instead. Readers still read the frozen main file; writers " +
+        "quietly fill this pit. On unlock, the delta is merged back into the " +
+        "database file and the main file goes live again. Forget to unlock " +
+        "and this pit grows forever — a classic Firebird operations story."
+    },
+    {
+      id: "gbak", code: "GBAK", name: "gbak Depot",
+      x: 48.5, y: 32, w: 4, d: 3, h: 2.6, color: "#0ca678",
+      short: "Logical backup — and a snapshot that pins the OIT.",
+      desc: "gbak takes a logical backup: it attaches to the database like " +
+        "any other client, reads every table through a snapshot transaction " +
+        "and writes a portable .fbk file that a restore rebuilds from " +
+        "scratch. It runs online — but watch the Transaction Hall while it " +
+        "does. Its snapshot transaction pins the OIT for the entire run, so " +
+        "garbage collection stalls and record versions pile up until the " +
+        "backup finishes. A nightly gbak against a busy database and a " +
+        "mysteriously bloating database are very often the same story."
+    },
+    {
+      id: "nbackup", code: "NBACKUP", name: "nbackup Vault",
+      x: 54, y: 32.5, w: 3.2, d: 3.2, h: 3.4, color: "#1098ad",
+      short: "Physical, incremental backup by level.",
+      desc: "nbackup copies the database file itself, incrementally, by " +
+        "level. Level 0 is the whole file; level 1 copies only the pages " +
+        "that changed since level 0; level 2 only those changed since level " +
+        "1, and so on. Each level is fast and small, but a restore must " +
+        "apply the whole chain in order — lose level 0 and the rest are " +
+        "waste paper. Locking the database sends new writes to the " +
+        "difference file so the frozen main file can be copied safely."
+    },
+    {
       id: "pio", code: "PIO", name: "Database File — Physical I/O",
       x: 24, y: 34, w: 15, d: 6, h: 0, color: "#5f3dc4",
       short: "Careful writes instead of a WAL.",
@@ -207,6 +244,9 @@ var FB = (function () {
   stations.btr = { x: 43.5, y: 12 };
   stations.sort = { x: 43.5, y: 19.2 };
   stations.gc = { x: 49.5, y: 25.5 };
+  stations.delta = { x: 43.7, y: 33.4 };
+  stations.gbak = { x: 50.5, y: 35.4 };
+  stations.nbackup = { x: 55.6, y: 36 };
 
   var districts = [
     { name: "REMOTE — the harbor", x: -1, y: 14, w: 11, d: 12, color: "rgba(61,139,253,0.10)" },
@@ -214,7 +254,9 @@ var FB = (function () {
     { name: "JRD — engine downtown", x: 27, y: 4, w: 20, d: 21, color: "rgba(32,201,151,0.08)" },
     { name: "VIO / MVCC — version towers", x: 47, y: 10, w: 10, d: 18, color: "rgba(77,171,247,0.10)" },
     { name: "CCH — page cache", x: 25, y: 23, w: 13, d: 8, color: "rgba(76,110,245,0.12)" },
-    { name: "PIO — database file", x: 23, y: 33, w: 17, d: 8, color: "rgba(95,61,196,0.16)" }
+    { name: "PIO — database file", x: 23, y: 33, w: 17, d: 8, color: "rgba(95,61,196,0.16)" },
+    { name: "delta — difference file", x: 40.4, y: 33.2, w: 6.7, d: 7.6, color: "rgba(232,89,12,0.12)" },
+    { name: "backup yard — gbak & nbackup", x: 47.6, y: 30.6, w: 11.4, d: 9.8, color: "rgba(16,152,173,0.10)" }
   ];
 
   // Main road as sequences of station ids.
@@ -229,7 +271,10 @@ var FB = (function () {
     ["cmp", "met"],
     ["exec", "btr"],
     ["exec", "sort"],
-    ["gc", "mvcc"]
+    ["gc", "mvcc"],
+    ["pio", "delta"],
+    ["delta", "gbak"],
+    ["gbak", "nbackup"]
   ];
 
   var tour = [
@@ -294,6 +339,16 @@ var FB = (function () {
         "the deadlock scanner occasionally sends one home to retry."
     },
     {
+      focus: "gbak", zoom: 1.15, title: "Backup yard — gbak and nbackup",
+      text: "Two very different tools. gbak dumps the database logically " +
+        "through a normal attachment — but its snapshot pins the OIT for " +
+        "the whole run, so a nightly backup of a busy database is itself a " +
+        "bloat story. nbackup copies the file physically, level by level; " +
+        "while it holds the lock, every new write lands in the orange delta " +
+        "pit and is merged back on unlock. Run one from the control room " +
+        "and watch the counters."
+    },
+    {
       focus: "gc", zoom: 1.15, title: "Sweep — and over to you",
       text: "The sweep truck tours the towers demolishing versions below the " +
         "OIT — unless a long transaction parks it. Now experiment: raise " +
@@ -303,7 +358,7 @@ var FB = (function () {
   ];
 
   return {
-    VERSION: "0.3.0",
+    VERSION: "0.4.0",
     buildings: buildings,
     byId: byId,
     stations: stations,
@@ -311,6 +366,6 @@ var FB = (function () {
     roads: roads,
     tour: tour,
     // world bounds for camera fit
-    bounds: { x0: -2, y0: 0, x1: 58, y1: 41 }
+    bounds: { x0: -2, y0: 0, x1: 60, y1: 42 }
   };
 })();

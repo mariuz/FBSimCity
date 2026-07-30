@@ -20,7 +20,9 @@ var Render = (function () {
       cacheEmpty: "rgba(60,70,110,0.55)", cacheResident: "rgba(76,110,245,0.55)",
       labelStrong: "#ffffff", label: "rgba(220,228,255,0.75)",
       labelDim: "rgba(150,165,215,0.7)",
-      tipOk: "#ffe066", tipBad: "#ff8787", tipAlert: "#ff6b6b"
+      tipOk: "#ffe066", tipBad: "#ff8787", tipAlert: "#ff6b6b",
+      deltaWallX: "#2b1608", deltaWallY: "#3a1e0b", deltaFloor: "#241305",
+      deltaStroke: "rgba(232,140,60,0.35)", deltaLabel: "rgba(255,190,140,0.5)"
     },
     day: {
       bgTop: "#dbe4f3", bgBot: "#eef3fb",
@@ -34,7 +36,9 @@ var Render = (function () {
       cacheEmpty: "rgba(150,160,200,0.5)", cacheResident: "rgba(76,110,245,0.5)",
       labelStrong: "#141c36", label: "rgba(30,45,90,0.9)",
       labelDim: "rgba(60,80,140,0.8)",
-      tipOk: "#8a5a00", tipBad: "#b02525", tipAlert: "#c92a2a"
+      tipOk: "#8a5a00", tipBad: "#b02525", tipAlert: "#c92a2a",
+      deltaWallX: "#e2cbb6", deltaWallY: "#d6bca4", deltaFloor: "#eeddcc",
+      deltaStroke: "rgba(190,110,40,0.5)", deltaLabel: "rgba(150,80,20,0.8)"
     }
   };
   var T = THEMES.dark;
@@ -233,6 +237,54 @@ var Render = (function () {
     return h.length < 2 ? "0" + h : h;
   }
 
+  /* The difference file: a shallow pit beside the main excavation that
+   * fills with orange as diverted writes accumulate while the database is
+   * locked, and drains as the delta merges back. */
+  function drawDelta(ctx, cam, s) {
+    var b = FB.byId.delta, bk = s.backup;
+    var depth = 0.8;
+    var a0 = proj(cam, b.x, b.y, 0), b0 = proj(cam, b.x + b.w, b.y, 0),
+        c0 = proj(cam, b.x + b.w, b.y + b.d, 0), d0 = proj(cam, b.x, b.y + b.d, 0),
+        a1 = proj(cam, b.x, b.y, -depth), b1 = proj(cam, b.x + b.w, b.y, -depth),
+        c1 = proj(cam, b.x + b.w, b.y + b.d, -depth), d1 = proj(cam, b.x, b.y + b.d, -depth);
+    poly(ctx, [a0, b0, b1, a1], T.deltaWallX);
+    poly(ctx, [a0, d0, d1, a1], T.deltaWallY);
+    poly(ctx, [a1, b1, c1, d1], T.deltaFloor, T.deltaStroke, 1);
+
+    // fill level: how full the delta is (caps out for display at 400 pages)
+    var fill = Math.min(1, bk.deltaPages / 400);
+    if (fill > 0) {
+      var fy = b.y + b.d - (b.d - 0.6) * fill;
+      var f0 = proj(cam, b.x + 0.3, fy, -depth + 0.05),
+          f1 = proj(cam, b.x + b.w - 0.3, fy, -depth + 0.05),
+          f2 = proj(cam, b.x + b.w - 0.3, b.y + b.d - 0.3, -depth + 0.05),
+          f3 = proj(cam, b.x + 0.3, b.y + b.d - 0.3, -depth + 0.05);
+      ctx.save();
+      ctx.globalAlpha = bk.merging ? 0.55 : 0.8;
+      poly(ctx, [f0, f1, f2, f3], "#e8590c", "rgba(255,169,77,0.7)", 1);
+      ctx.restore();
+    }
+    if (bk.deltaFlash > 0) {
+      var dp = proj(cam, b.x + b.w / 2, b.y + b.d / 2, -depth + 0.1);
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, bk.deltaFlash);
+      ctx.fillStyle = "#ffa94d";
+      ctx.shadowColor = "#ffa94d";
+      ctx.shadowBlur = 14 * cam.zoom;
+      ctx.beginPath();
+      ctx.arc(dp[0], dp[1], 4.5 * cam.zoom, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    if (cam.zoom > 0.55) {
+      ctx.fillStyle = bk.locked ? "#ffa94d" : T.deltaLabel;
+      ctx.font = (10 * Math.min(cam.zoom, 1.3)) + "px 'Segoe UI', sans-serif";
+      var lp = proj(cam, b.x + 0.4, b.y + b.d - 0.35, -depth);
+      ctx.fillText(bk.locked ? "LOCKED — writes divert here"
+        : bk.merging ? "merging back…" : "delta file (idle)", lp[0], lp[1]);
+    }
+  }
+
   function towerColor(v) {
     // blue -> red as the chain grows (hex, so shade() can parse it)
     var t = Math.min(1, (v - 1) / 14);
@@ -246,10 +298,19 @@ var Render = (function () {
   function collectDrawables(s, hoverId, selectedId, time) {
     var list = [];
     FB.buildings.forEach(function (b) {
-      if (b.id === "cache" || b.id === "pio" || b.id === "mvcc") return;
+      if (b.id === "cache" || b.id === "pio" || b.id === "mvcc" ||
+          b.id === "delta") return;
       var glow = 0;
       if (b.id === hoverId || b.id === selectedId) glow = 1;
-      if (b.id === "tra" && s.pinned !== null) glow = Math.max(glow, 0.5 + 0.5 * Math.sin(time * 5));
+      if (b.id === "tra" && (s.pinned !== null || s.backup.gbakTxn !== null)) {
+        glow = Math.max(glow, 0.5 + 0.5 * Math.sin(time * 5));
+      }
+      if (b.id === "gbak" && s.backup.gbakActive) {
+        glow = Math.max(glow, 0.5 + 0.5 * Math.sin(time * 4));
+      }
+      if (b.id === "nbackup" && (s.backup.nbActive || s.backup.locked)) {
+        glow = Math.max(glow, 0.5 + 0.5 * Math.sin(time * 4));
+      }
       list.push({
         key: b.x + b.w + b.y + b.d, type: "box",
         x: b.x, y: b.y, w: b.w, d: b.d, h: b.h, color: b.color,
@@ -409,6 +470,7 @@ var Render = (function () {
   function draw(ctx, cam, s, cw, ch, hoverId, selectedId, time) {
     drawGround(ctx, cam, cw, ch);
     drawStorage(ctx, cam, s);
+    drawDelta(ctx, cam, s);
     drawCachePlaza(ctx, cam, s);
     var list = collectDrawables(s, hoverId, selectedId, time);
     for (var i = 0; i < list.length; i++) {

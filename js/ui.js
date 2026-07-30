@@ -88,6 +88,20 @@ var UI = (function () {
       set: { rate: 10, writes: 70, cache: 64, sweepint: 10, sweepon: true, longtxn: false },
       focus: "gc", zoom: 1.2,
       msg: "Heavy writes with an aggressive 10-second sweep interval. The truck barely rests."
+    },
+    nightlygbak: {
+      label: "Nightly gbak on a busy DB",
+      set: { rate: 10, writes: 55, cache: 64, sweepint: 25, sweepon: true, longtxn: false },
+      run: function (s) { Sim.startGbak(s); },
+      focus: "gbak", zoom: 1.1,
+      msg: "The nightly backup starts against a live workload. Watch the OIT pin itself for the whole run."
+    },
+    nbackup: {
+      label: "nbackup with delta",
+      set: { rate: 10, writes: 70, cache: 64, sweepint: 25, sweepon: true, longtxn: false },
+      run: function (s) { Sim.startNbackup(s, 0); },
+      focus: "delta", zoom: 1.15,
+      msg: "nbackup level 0 locks the file — every write now lands in the delta pit until it merges back."
     }
   };
 
@@ -101,6 +115,7 @@ var UI = (function () {
     setCheck("ctl-sweepon", sc.set.sweepon);
     setCheck("ctl-longtxn", sc.set.longtxn);
     if (sc.burst) Sim.burst(simRef, sc.burst);
+    if (sc.run) sc.run(simRef);
     simRef.log.push({ t: simRef.time, msg: sc.msg });
     if (simRef.log.length > 6) simRef.log.shift();
     if (onFocus && !noFly) onFocus(sc.focus, sc.zoom);
@@ -159,6 +174,11 @@ var UI = (function () {
     $("btn-sweep").addEventListener("click", function () {
       Sim.startSweep(sim, true);
     });
+    $("btn-gbak").addEventListener("click", function () { Sim.startGbak(sim); });
+    $("btn-nb0").addEventListener("click", function () { Sim.startNbackup(sim, 0); });
+    $("btn-nb1").addEventListener("click", function () { Sim.startNbackup(sim, 1); });
+    $("btn-lock").addEventListener("click", function () { Sim.toggleLock(sim); });
+    $("btn-restore").addEventListener("click", function () { Sim.restoreChain(sim); });
     $("btn-burst").addEventListener("click", function () {
       Sim.burst(sim, 60);
     });
@@ -244,6 +264,9 @@ var UI = (function () {
         applyScenario(sc, true); // stay on the city-wide view
         els.info.classList.add("hidden");
       }
+      // ?lock=1 — leave the database locked, the way a forgotten
+      // "nbackup -L" does. The delta then grows for as long as you watch.
+      if (params.get("lock") === "1") Sim.toggleLock(simRef);
       var pn = params.get("panel");
       if (pn && FB.byId[pn]) showBuilding(pn);
     } catch (e) { }
@@ -343,9 +366,85 @@ var UI = (function () {
     els.infoCode.textContent = b.code;
     els.infoCode.style.display = "";
     els.infoBody.innerHTML = "<p>" + b.desc + "</p>" +
-      (id === "mvcc" ? "<div id='chain-live'></div>" : "");
+      (id === "mvcc" ? "<div id='chain-live'></div>" : "") +
+      actionsFor(id);
     if (id === "mvcc") renderChain(simRef);
+    wireActions();
     els.info.classList.remove("hidden");
+  }
+
+  // Walk up to a building and operate it: the controls that belong to a
+  // subsystem live on the subsystem, not only in the control room.
+  var ACTIONS = {
+    gc: [
+      { id: "act-sweep", label: "Sweep now", fn: function (s) { Sim.startSweep(s, true); } },
+      { id: "act-autosweep", label: function (s) {
+          return (s.sweepEnabled ? "Switch off" : "Switch on") + " automatic sweep";
+        }, fn: function (s) {
+          setCheck("ctl-sweepon", !s.sweepEnabled);
+        } }
+    ],
+    gbak: [
+      { id: "act-gbak", label: function (s) {
+          return s.backup.gbakActive ? "gbak running…" : "Run gbak (logical backup)";
+        }, fn: function (s) { Sim.startGbak(s); } }
+    ],
+    nbackup: [
+      { id: "act-nb0", label: "nbackup level 0", fn: function (s) { Sim.startNbackup(s, 0); } },
+      { id: "act-nb1", label: "nbackup level 1", fn: function (s) { Sim.startNbackup(s, 1); } },
+      { id: "act-lock", label: function (s) {
+          return s.backup.locked ? "Unlock & merge delta" : "Lock database (-L)";
+        }, fn: function (s) { Sim.toggleLock(s); } }
+    ],
+    delta: [
+      { id: "act-lock2", label: function (s) {
+          return s.backup.locked ? "Unlock & merge delta" : "Lock database (-L)";
+        }, fn: function (s) { Sim.toggleLock(s); } }
+    ],
+    tra: [
+      { id: "act-longtxn", label: function (s) {
+          return s.pinned !== null ? "Commit the forgotten transaction"
+                                   : "Forget to commit a transaction";
+        }, fn: function (s) { setCheck("ctl-longtxn", s.pinned === null); } }
+    ]
+  };
+
+  function labelOf(a) {
+    return typeof a.label === "function" ? a.label(simRef) : a.label;
+  }
+
+  function actionsFor(id) {
+    var list = ACTIONS[id];
+    if (!list) return "";
+    var html = "<div class='panel-actions'>";
+    list.forEach(function (a) {
+      html += "<button class='act' data-act='" + a.id + "'>" +
+        labelOf(a) + "</button>";
+    });
+    return html + "</div>";
+  }
+
+  function wireActions() {
+    var list = ACTIONS[infoSelectedId];
+    if (!list) return;
+    list.forEach(function (a) {
+      var el = els.infoBody.querySelector("[data-act='" + a.id + "']");
+      if (el) {
+        el.addEventListener("click", function () {
+          a.fn(simRef);
+          refreshActionLabels();
+        });
+      }
+    });
+  }
+
+  function refreshActionLabels() {
+    var list = ACTIONS[infoSelectedId];
+    if (!list || els.info.classList.contains("hidden")) return;
+    list.forEach(function (a) {
+      var el = els.infoBody.querySelector("[data-act='" + a.id + "']");
+      if (el) el.textContent = labelOf(a);
+    });
   }
 
   // live version-chain inspector: the busiest table's chain, with each
@@ -502,13 +601,35 @@ var UI = (function () {
     $("st-oat").textContent = s.oat;
     var oitEl = $("st-oit");
     oitEl.textContent = s.oit;
-    cls(oitEl, s.pinned !== null ? "bad" : "good");
-    $("st-pin").textContent = s.pinned !== null ? "⚠ pinned by txn " + s.pinned : "";
+    var pinnedBy = s.pinned !== null ? "txn " + s.pinned
+      : s.backup.gbakTxn !== null ? "gbak (txn " + s.backup.gbakTxn + ")" : null;
+    cls(oitEl, pinnedBy ? "bad" : "good");
+    $("st-pin").textContent = pinnedBy ? "⚠ pinned by " + pinnedBy : "";
     var vEl = $("st-vers");
     vEl.textContent = s.totalVersions;
     cls(vEl, s.totalVersions > 60 ? "bad" : s.totalVersions > 25 ? "warn" : "good");
     $("st-locks").textContent = s.lockWaits;
     $("st-rb").textContent = s.rollbacks;
+    $("st-dirty").textContent = s.dirtyEvictions;
+    var bk = s.backup, bs = "idle", bcls = "";
+    if (bk.gbakActive) {
+      bs = "gbak " + Math.round(bk.gbakProgress * 100) + "%"; bcls = "warn";
+    } else if (bk.nbActive) {
+      bs = "nbackup L" + bk.nbLevel + " " + Math.round(bk.nbProgress * 100) + "%";
+      bcls = "warn";
+    } else if (bk.merging) {
+      bs = "merging delta"; bcls = "warn";
+    } else if (bk.locked) {
+      bs = "LOCKED"; bcls = "bad";
+    } else if (bk.levels.length) {
+      bs = bk.levels.map(function (l) { return "L" + l.level; }).join("+");
+      bcls = "good";
+    }
+    var bEl = $("st-backup");
+    bEl.textContent = bs;
+    cls(bEl, bcls);
+    $("st-delta").textContent = bk.deltaPages;
+    cls($("st-delta"), bk.deltaPages > 250 ? "bad" : bk.deltaPages > 0 ? "warn" : "");
 
     spark("sp-qps", hist.qps, "#4dabf7");
     spark("sp-hit", hist.hit, "#69db7c", 1);
@@ -523,6 +644,7 @@ var UI = (function () {
     if (infoSelectedId === "mvcc" && !els.info.classList.contains("hidden")) {
       renderChain(s);
     }
+    refreshActionLabels();
 
     updateTrace();
   }

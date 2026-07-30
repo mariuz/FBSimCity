@@ -43,6 +43,8 @@
       <option value="locks">Lock contention</option>
       <option value="rush">Rush hour</option>
       <option value="sweepstorm">Sweep storm</option>
+      <option value="nightlygbak">Nightly gbak on a busy DB</option>
+      <option value="nbackup">nbackup with delta</option>
     </select>
   </div>
 
@@ -80,6 +82,17 @@
     <button id="btn-burst">Rush hour ×60</button>
   </div>
 
+  <h2 class="sub-head">Backup yard</h2>
+  <div class="btnrow">
+    <button id="btn-gbak" title="Logical backup — pins the OIT while it runs">gbak</button>
+    <button id="btn-nb0" title="Physical backup, full">nbackup L0</button>
+    <button id="btn-nb1" title="Physical backup, changed pages only">L1</button>
+  </div>
+  <div class="btnrow">
+    <button id="btn-lock" title="Freeze the main file; writes divert to the delta">Lock / unlock</button>
+    <button id="btn-restore" title="Show the restore chain">Restore chain</button>
+  </div>
+
   <div id="event-log" aria-live="polite"></div>
 </aside>
 
@@ -93,14 +106,16 @@
 <footer id="stats" aria-live="off">
   <span class="stat"><b id="st-qps"></b> queries/s <canvas id="sp-qps" width="64" height="18"></canvas></span>
   <span class="stat">cache hit <b id="st-hit"></b> <canvas id="sp-hit" width="64" height="18"></canvas></span>
-  <span class="stat">evictions <b id="st-evict"></b></span>
+  <span class="stat">evictions <b id="st-evict"></b> <span class="dim">(dirty <b id="st-dirty"></b>)</span></span>
   <span class="stat">Next <b id="st-next"></b></span>
   <span class="stat">OAT <b id="st-oat"></b></span>
   <span class="stat">OIT <b id="st-oit"></b> <span id="st-pin" class="bad"></span></span>
   <span class="stat">stale versions <b id="st-vers"></b> <canvas id="sp-vers" width="64" height="18"></canvas></span>
   <span class="stat">lock waits <b id="st-locks"></b></span>
   <span class="stat">rollbacks <b id="st-rb"></b></span>
-  <span class="stat version">v0.3.0</span>
+  <span class="stat">backup <b id="st-backup"></b></span>
+  <span class="stat">delta <b id="st-delta"></b></span>
+  <span class="stat version">v0.4.0</span>
 </footer>
 
 <div id="whereami" class="hidden" aria-live="polite"></div>

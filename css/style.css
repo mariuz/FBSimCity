@@ -89,6 +89,7 @@ button.primary:hover { background: rgba(230,120,40,0.55); }
 #controls-toggle:hover { color: #fff; background: none; }
 #controls.collapsed .ctl,
 #controls.collapsed .btnrow,
+#controls.collapsed .sub-head,
 #controls.collapsed #event-log { display: none; }
 #controls.collapsed { width: auto; }
 #controls.collapsed h2 { margin-bottom: 0; gap: 10px; }
@@ -326,6 +327,46 @@ table.keys kbd {
 .arrow { text-align: center; color: #8b97c4; font-size: 11px; padding: 3px 0; }
 .chain-col .fine { margin-top: 12px; }
 
+/* ---- control-room sub headings ---- */
+.sub-head {
+  font-size: 11px !important;
+  text-transform: uppercase;
+  letter-spacing: 1.3px;
+  color: #8fa0d8;
+  margin: 14px 0 6px !important;
+  padding-top: 10px;
+  border-top: 1px solid rgba(120,140,210,0.2);
+}
+body.day .sub-head { color: #51619b; border-top-color: rgba(90,110,180,0.25); }
+
+/* ---- in-panel subsystem actions ---- */
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(120,140,210,0.22);
+}
+button.act {
+  font-size: 11.5px;
+  padding: 5px 10px;
+  background: rgba(255,169,77,0.16);
+  border-color: rgba(255,169,77,0.4);
+  color: #ffd8a8;
+}
+button.act:hover { background: rgba(255,169,77,0.3); border-color: rgba(255,169,77,0.7); }
+body.day .panel-actions { border-top-color: rgba(90,110,180,0.3); }
+body.day button.act {
+  background: rgba(210,120,30,0.12);
+  border-color: rgba(210,120,30,0.45);
+  color: #8a5a00;
+}
+body.day button.act:hover { background: rgba(210,120,30,0.25); }
+
+#stats .dim { color: #5f6c99; }
+body.day #stats .dim { color: #7c88b4; }
+
 /* ---- close-range "you are here" chip ---- */
 #whereami {
   position: fixed;
@@ -467,4 +508,10 @@ body.day #info-close:hover, body.day #tour-close:hover, body.day #trace-end:hove
     overflow-y: auto;
   }
   #event-log { display: none; }
+  /* iOS Safari zooms the whole page when a focused control is under 16px.
+     Keep every focusable form control at 16px on phones. */
+  #ctl-scenario,
+  #controls input[type="range"],
+  #controls input[type="checkbox"] { font-size: 16px; }
+  #ctl-scenario { min-height: 34px; }
 }

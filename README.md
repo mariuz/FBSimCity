@@ -4,7 +4,7 @@
 
 🔗 **Live: [mariuz.github.io/FBSimCity](https://mariuz.github.io/FBSimCity/)**
 
-![FBSimCity — a long-running transaction has pinned the OIT, the record version towers are growing, and the live chain inspector shows the busiest table's versions with their writing transactions](docs/screenshot.png)
+![FBSimCity — the database is locked by nbackup, so page writes are diverting into the orange difference-file pit while the backup yard, page cache and version towers keep working](docs/screenshot.png)
 
 FBSimCity is an interactive isometric city where every building is a real
 Firebird subsystem and every glowing particle is a query making its commute:
@@ -44,6 +44,9 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
 | Sweep & GC Depot | GC | Cooperative GC plus the sweep truck touring the towers |
 | Page Cache Plaza | CCH | Buffer slots flash green (hit) / red (miss) / yellow (dirty) |
 | Database File excavation | PIO | Careful writes — no WAL — keep the file consistent |
+| gbak Depot | GBAK | Logical backup; its snapshot pins the OIT for the whole run |
+| nbackup Vault | NBACKUP | Physical backup by level; L0 full, L1 changed pages only |
+| Difference File pit | DELTA | Where writes divert while the database is locked |
 
 ## Things to try
 
@@ -57,8 +60,15 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
 - **Flip on "Long-running transaction."** The OIT pins, the sweep truck is
   not allowed to demolish anything, and the version towers grow and turn
   red — Firebird's version of bloat. Flip it off and hit **Sweep now**.
+- **Run the nightly gbak** from the backup yard while the city is busy, and
+  watch the OIT pin itself to gbak's snapshot for the whole run — the reason
+  a nightly backup and a bloating database are so often the same story.
+- **Lock the database** (nbackup `-L`) and watch every page write divert into
+  the orange difference-file pit, then merge back on unlock.
 - **Shrink the page cache** to 16 pages and watch the hit ratio fall while
-  queries detour down into the database-file excavation.
+  queries detour down into the database-file excavation — and the *dirty*
+  eviction counter start climbing, because a reader now has to write
+  somebody else's page out before it can reuse the frame.
 - **Raise the write mix** and watch lock waits climb at the tower — with the
   occasional deadlock victim sent home (red particle).
 - **Rush hour ×60** floods the harbor with a burst of queries.
@@ -73,25 +83,33 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
   works with a screen reader.
 - Switch to the **daylight theme** (`D`), pause the world (`space`), or run
   it at 4× speed. Press `?` for all shortcuts.
-- **Deep-link a state**: `?scenario=stuckoit&theme=day&warp=50&panel=mvcc`
+- **Deep-link a state**: `?scenario=stuckoit&theme=day&warp=50&panel=mvcc&lock=1`
   applies a scenario (`steady`, `thrash`, `stuckoit`, `locks`, `rush`,
-  `sweepstorm`), picks a theme, fast-forwards the simulation 50 seconds and
-  opens a building's info panel — handy for sharing a reproducible view (the
-  README screenshot is exactly
-  [this link](https://mariuz.github.io/FBSimCity/?scenario=stuckoit&warp=50&panel=mvcc)).
+  `sweepstorm`, `nightlygbak`, `nbackup`), picks a theme, fast-forwards the
+  simulation, opens a building's info panel and can leave the database
+  locked — handy for sharing a reproducible view (the README screenshot is
+  exactly
+  [this link](https://mariuz.github.io/FBSimCity/?scenario=steady&lock=1&warp=60&panel=delta)).
 
 ## What it is (and isn't)
 
 The simulation implements honest scaled-down mechanics: multi-generational
-record versions with chains per table, Next/OAT/OIT marker arithmetic,
-cooperative garbage collection plus interval sweep, an LRU page cache over a
-skewed page-access distribution, and lock waits with deadlock rollbacks.
-Numbers are scaled so changes stay human-observable.
+record versions with per-table chains carrying real transaction ids,
+Next/OAT/OIT marker arithmetic, cooperative garbage collection plus interval
+sweep, an LRU page cache with forced-write flushing at commit and a write
+charge for dirty evictions, gbak and nbackup with difference files, and lock
+waits with deadlock rollbacks. Numbers are scaled so changes stay
+human-observable.
 
 It is **not** an emulator: no SQL is parsed, no Firebird code runs in your
 browser, and plenty of subtlety (commit-order snapshots, precedence graphs of
 careful writes, savepoints, two-phase commit…) is simplified. Treat it as
 intuition, not documentation — corrections welcome via issues and PRs.
+
+**[docs/KNOBS.md](docs/KNOBS.md) audits every control**: what it does to the
+model, and whether the mechanism is real, merely scaled, or a plausible
+stand-in — plus the deliberate simplifications, listed so nobody has to
+discover them by reading the source.
 
 ## Running locally
 
@@ -113,6 +131,12 @@ then open <http://localhost:8000/>.
   is neon*)
 - `js/ui.js` — control room, stats bar, info panel, guided tour
 - `js/main.js` — camera, input, main loop
+- `lifecycle.html` — the accessible text walk of the pipeline
+- `docs/KNOBS.md` — knob audit: what every control really does
+- `tools/screenshot.ps1` — regenerates `docs/screenshot.png` from a deep link
+
+**Camera:** drag to pan, scroll or pinch to zoom, arrow keys to pan, `+` / `−`
+to zoom. There is no rotation — the city is a fixed isometric projection.
 
 ## Credits
 

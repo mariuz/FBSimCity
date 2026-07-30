@@ -24,9 +24,21 @@ if ($null -eq $edge) {
 
 $outPath = Join-Path (Split-Path $PSScriptRoot -Parent) $Out
 
-& $edge --headless=new --disable-gpu --hide-scrollbars `
-  --window-size="$Width,$Height" --virtual-time-budget=12000 `
-  --screenshot="$outPath" $Url
+# Use a throwaway profile and delete it afterwards. Without an explicit
+# --user-data-dir, headless Chromium reuses (and grows) a default profile
+# directory on every run; caches and crash dumps accumulate there unnoticed.
+$profileDir = Join-Path ([System.IO.Path]::GetTempPath()) ("fbsimcity-shot-" + [guid]::NewGuid())
+
+try {
+  & $edge --headless=new --disable-gpu --hide-scrollbars `
+    --user-data-dir="$profileDir" --no-first-run --disable-extensions `
+    --window-size="$Width,$Height" --virtual-time-budget=12000 `
+    --screenshot="$outPath" $Url
+} finally {
+  if (Test-Path $profileDir) {
+    Remove-Item $profileDir -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
 
 if (Test-Path $outPath) {
   Write-Host "Wrote $outPath ($((Get-Item $outPath).Length) bytes)"
