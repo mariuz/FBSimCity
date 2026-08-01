@@ -62,7 +62,9 @@
       { id: "ctl-sweepint", doc: "Sweep interval" },
       { id: "ctl-sweepon", doc: "Automatic sweep" },
       { id: "ctl-longtxn", doc: "Long-running transaction" },
-      { id: "ctl-scenario", doc: "Scenario" }
+      { id: "ctl-scenario", doc: "Scenario" },
+      { id: "ctl-replmode", doc: "Replication mode" },
+      { id: "ctl-replhealth", doc: "Replica health" }
     ];
     controls.forEach(function (c) {
       t.ok("control #" + c.id + " exists", !!document.getElementById(c.id));
@@ -179,6 +181,72 @@
     Sim.startNbackup(lv, 1);
     t.ok("level 1 without level 0 is refused", !lv.backup.nbActive);
 
+    // --- logical replication ---
+    // async: the primary never waits, the replica trails
+    var ra = Sim.create();
+    ra.queryRate = 12; ra.updateRatio = 0.9;
+    Sim.setReplMode(ra, "async");
+    run(ra, 60);
+    t.ok("async replication journals committed changes", ra.repl.generated > 0);
+    t.ok("async replica applies", ra.repl.applied > 0);
+    t.ok("async commits never hang", !ra.repl.stalled);
+    t.eq("lag is generated minus applied", Sim.replLag(ra),
+      ra.repl.generated - ra.repl.applied);
+    t.ok("a healthy replica keeps lag small", Sim.replLag(ra) < 60,
+      "lag " + Sim.replLag(ra));
+
+    // segments are sealed in order and applied in order
+    t.ok("segment numbers are strictly increasing",
+      ra.repl.segments.every(function (sg, i, arr) {
+        return i === 0 || sg.n > arr[i - 1].n;
+      }), "commit order must be preserved");
+
+    // a slow replica builds lag
+    var rs = Sim.create();
+    rs.queryRate = 14; rs.updateRatio = 0.9;
+    Sim.setReplMode(rs, "async"); Sim.setReplHealth(rs, "slow");
+    run(rs, 60);
+    t.ok("a slow replica accumulates lag", Sim.replLag(rs) > Sim.replLag(ra),
+      "slow " + Sim.replLag(rs) + " vs healthy " + Sim.replLag(ra));
+
+    // an unreachable replica accumulates segments, and recovers in order
+    var rd = Sim.create();
+    rd.queryRate = 12; rd.updateRatio = 0.9;
+    Sim.setReplMode(rd, "async"); Sim.setReplHealth(rd, "down");
+    run(rd, 60);
+    var backlog = rd.repl.segments.length;
+    t.ok("an unreachable replica stacks up segments", backlog > 0);
+    t.eq("nothing is applied while it is down", rd.repl.applied, 0);
+    var firstSeg = rd.repl.segments[0].n;
+    Sim.setReplHealth(rd, "healthy");
+    run(rd, 30);
+    t.ok("the replica catches up when it returns",
+      rd.repl.segments.length < backlog);
+    t.ok("catch-up resumes from the oldest segment, in order",
+      !rd.repl.segments.length || rd.repl.segments[0].n >= firstSeg);
+
+    // synchronous replication with a dead replica must hang, not downgrade
+    var rc = Sim.create();
+    rc.queryRate = 8; rc.updateRatio = 0.8;
+    Sim.setReplMode(rc, "sync"); Sim.setReplHealth(rc, "down");
+    run(rc, 60);
+    t.ok("a dead synchronous replica hangs commits", rc.repl.stalled,
+      "silently continuing would be claiming durability it does not have");
+
+    // switching replication off discards the backlog
+    var ro2 = Sim.create();
+    ro2.queryRate = 12; ro2.updateRatio = 0.9;
+    Sim.setReplMode(ro2, "async"); Sim.setReplHealth(ro2, "down");
+    run(ro2, 40);
+    t.ok("backlog exists before switching off", ro2.repl.segments.length > 0);
+    Sim.setReplMode(ro2, "off");
+    t.eq("switching replication off clears the backlog",
+      ro2.repl.segments.length, 0);
+    var genAtOff = ro2.repl.generated;
+    run(ro2, 20);
+    t.eq("nothing is journalled while replication is off",
+      ro2.repl.generated, genAtOff);
+
     // dirty eviction costs a write
     var d = Sim.create();
     d.queryRate = 14; d.updateRatio = 0.9;
@@ -192,7 +260,7 @@
   // ---- 5. decisions have measured, differing consequences --------------
 
   function testDecisions() {
-    t.ok("three decisions are defined", FB.challenges.length === 3);
+    t.ok("four decisions are defined", FB.challenges.length === 4);
     FB.challenges.forEach(function (c) {
       t.eq("decision '" + c.id + "' offers two options", c.options.length, 2);
     });

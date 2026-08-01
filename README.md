@@ -4,7 +4,7 @@
 
 🔗 **Live: [mariuz.github.io/FBSimCity](https://mariuz.github.io/FBSimCity/)**
 
-![FBSimCity — the database is locked by nbackup, so page writes are diverting into the orange difference-file pit while the backup yard, page cache and version towers keep working](docs/screenshot.png)
+![FBSimCity — a replica applying too slowly, so sealed journal segments are stacking up in the replication yard while the rest of the city keeps working](docs/screenshot.png)
 
 FBSimCity is an interactive isometric city where every building is a real
 Firebird subsystem and every glowing particle is a query making its commute:
@@ -44,6 +44,9 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
 | Sweep & GC Depot | GC | Cooperative GC plus the sweep truck touring the towers |
 | Page Cache Plaza | CCH | Buffer slots flash green (hit) / red (miss) / yellow (dirty) |
 | Database File excavation | PIO | Careful writes — no WAL — keep the file consistent |
+| Journal Yard | REPL | Committed changes journalled into segments, sealed and queued |
+| Replicator | REPL | Ships segments; async trails, sync makes commits wait |
+| Replica Database | REPL | A second database replaying the journal in commit order |
 | gbak Depot | GBAK | Logical backup; its snapshot pins the OIT for the whole run |
 | nbackup Vault | NBACKUP | Physical backup by level; L0 full, L1 changed pages only |
 | Difference File pit | DELTA | Where writes divert while the database is locked |
@@ -60,9 +63,16 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
 - **Flip on "Long-running transaction."** The OIT pins, the sweep truck is
   not allowed to demolish anything, and the version towers grow and turn
   red — Firebird's version of bloat. Flip it off and hit **Sweep now**.
-- **Make an operator decision.** Three situations where Firebird hands you a
+- **Break the replica.** Firebird 4+ replication is *logical* — there is no
+  WAL to ship, so committed changes are journalled into segments and replayed
+  on the replica in commit order. Set the replica slow and watch lag build;
+  set it unreachable and watch segments stack up in the yard. Then switch to
+  **synchronous** and break it again: commits hang, because a synchronous
+  replica that dies does not quietly downgrade to asynchronous.
+- **Make an operator decision.** Four situations where Firebird hands you a
   genuinely hard call — an idle transaction blocking sweep, a backup holding
-  the OIT through peak, a forgotten nbackup lock growing its delta. Both
+  the OIT through peak, a forgotten nbackup lock growing its delta, a dead
+  replica whose journal segments are filling the volume. Both
   answers cost something, and the verdict is measured from what actually
   happened in the model: how many versions were collected, how many page
   writes the merge cost, what the hit ratio did while it ran.
@@ -91,16 +101,19 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
   it at 4× speed. Press `?` for all shortcuts.
 - **Deep-link a state**: `?scenario=stuckoit&theme=day&warp=50&panel=mvcc&lock=1`
   applies a scenario (`steady`, `thrash`, `stuckoit`, `locks`, `rush`,
-  `sweepstorm`, `nightlygbak`, `nbackup`), picks a theme, fast-forwards the
+  `sweepstorm`, `nightlygbak`, `nbackup`, `replicalag`, `syncstall`), picks a
+  theme, fast-forwards the
   simulation, opens a building's info panel and can leave the database
   locked — handy for sharing a reproducible view (the README screenshot is
   exactly
-  [this link](https://mariuz.github.io/FBSimCity/?scenario=steady&lock=1&warp=60&panel=delta)).
+  [this link](https://mariuz.github.io/FBSimCity/?scenario=replicalag&warp=55&panel=journal)).
 
 ## What it is (and isn't)
 
 The simulation implements honest scaled-down mechanics: multi-generational
-record versions with per-table chains carrying real transaction ids,
+record versions with per-table chains carrying real transaction ids, logical
+replication that journals committed changes into segments and replays them in
+commit order,
 Next/OAT/OIT marker arithmetic, cooperative garbage collection plus interval
 sweep, an LRU page cache with forced-write flushing at commit and a write
 charge for dirty evictions, gbak and nbackup with difference files, and lock

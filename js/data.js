@@ -169,6 +169,45 @@ var FB = (function () {
         "control panel and watch the hit ratio move."
     },
     {
+      id: "journal", code: "REPL", name: "Journal Yard",
+      x: 15, y: 29.5, w: 5, d: 4, h: 2.4, color: "#845ef7",
+      short: "Committed changes are journalled into segments.",
+      desc: "Firebird 4 replication is <em>logical</em>, not physical — and " +
+        "it has to be, because there is no write-ahead log to ship. As each " +
+        "transaction commits, the changes themselves are written into a " +
+        "replication journal segment. When a segment fills it is sealed and " +
+        "queued for the replicator; a new one opens behind it. Crucially the " +
+        "segments preserve <strong>commit order</strong>, so the replica " +
+        "replays history exactly as the primary lived it."
+    },
+    {
+      id: "replicator", code: "REPL", name: "Replicator",
+      x: 9, y: 31.5, w: 3, d: 3, h: 3.2, color: "#5f3dc4",
+      short: "Ships sealed segments to the replica.",
+      desc: "The replicator hands sealed journal segments to the replica. In " +
+        "<strong>asynchronous</strong> mode it works at its own pace and the " +
+        "replica trails behind — commits on the primary never wait. In " +
+        "<strong>synchronous</strong> mode the commit itself does not return " +
+        "until the replica has the change, so the primary runs at the speed " +
+        "of the slowest replica. If a synchronous replica dies, commits hang " +
+        "rather than quietly losing durability — that is the honest " +
+        "behaviour, and the reason synchronous replication is a decision " +
+        "rather than a default."
+    },
+    {
+      id: "replica", code: "REPL", name: "Replica Database",
+      x: 1.5, y: 33, w: 6, d: 5, h: 0, color: "#7048e8",
+      short: "A second database applying the journal in commit order.",
+      desc: "The replica is another Firebird database, running read-only in " +
+        "replica mode, applying the arriving segments in the order they were " +
+        "committed. It is not a copy of the primary's pages — it is the same " +
+        "history, replayed. If it applies slower than the primary generates, " +
+        "the lag grows and unshipped segments pile up on disk, and that disk " +
+        "is the one the primary is also writing to. A replica that is merely " +
+        "slow is an inconvenience; a replica that is gone is a disk-space " +
+        "problem with a deadline."
+    },
+    {
       id: "delta", code: "DELTA", name: "Difference File",
       x: 41, y: 34, w: 5.5, d: 6, h: 0, color: "#e8590c",
       short: "Where writes go while nbackup holds the database locked.",
@@ -244,6 +283,9 @@ var FB = (function () {
   stations.btr = { x: 43.5, y: 12 };
   stations.sort = { x: 43.5, y: 19.2 };
   stations.gc = { x: 49.5, y: 25.5 };
+  stations.journal = { x: 17.5, y: 34 };
+  stations.replicator = { x: 10.5, y: 35 };
+  stations.replica = { x: 4.5, y: 32.6 };
   stations.delta = { x: 43.7, y: 33.4 };
   stations.gbak = { x: 50.5, y: 35.4 };
   stations.nbackup = { x: 55.6, y: 36 };
@@ -255,6 +297,7 @@ var FB = (function () {
     { name: "VIO / MVCC — version towers", x: 47, y: 10, w: 10, d: 18, color: "rgba(77,171,247,0.10)" },
     { name: "CCH — page cache", x: 25, y: 23, w: 13, d: 8, color: "rgba(76,110,245,0.12)" },
     { name: "PIO — database file", x: 23, y: 33, w: 17, d: 8, color: "rgba(95,61,196,0.16)" },
+    { name: "REPL — journal, ship, apply", x: 0.5, y: 28, w: 20.5, d: 13, color: "rgba(132,94,247,0.09)" },
     { name: "delta — difference file", x: 40.4, y: 33.2, w: 6.7, d: 7.6, color: "rgba(232,89,12,0.12)" },
     { name: "backup yard — gbak & nbackup", x: 47.6, y: 30.6, w: 11.4, d: 9.8, color: "rgba(16,152,173,0.10)" }
   ];
@@ -274,7 +317,10 @@ var FB = (function () {
     ["gc", "mvcc"],
     ["pio", "delta"],
     ["delta", "gbak"],
-    ["gbak", "nbackup"]
+    ["gbak", "nbackup"],
+    ["tra", "journal"],
+    ["journal", "replicator"],
+    ["replicator", "replica"]
   ];
 
   /* Operator decisions: situations where Firebird hands you a genuinely hard
@@ -313,6 +359,26 @@ var FB = (function () {
         { id: "cancel", label: "Cancel gbak",
           detail: "The OIT is released now and GC resumes immediately — but " +
             "there is no backup tonight." }
+      ]
+    },
+    {
+      id: "replicadown",
+      title: "The replica is gone and the segments are stacking up",
+      situation: "The replica stopped responding an hour ago. Replication is " +
+        "asynchronous, so the primary has carried on happily — but every " +
+        "committed change is still being journalled, and none of those " +
+        "segments are being shipped. They are accumulating on the same " +
+        "volume the database is writing to. Nobody can say yet when the " +
+        "replica comes back.",
+      options: [
+        { id: "drop", label: "Stop replication and discard the backlog",
+          detail: "The disk stops filling immediately. The replica is now " +
+            "useless — bringing it back means a fresh backup and restore, " +
+            "not a resume." },
+        { id: "keep", label: "Keep journalling and wait for the replica",
+          detail: "If it returns soon, it catches up from where it left off " +
+            "and nothing is lost. If it does not, you are racing the free " +
+            "space on that volume." }
       ]
     },
     {
@@ -393,6 +459,16 @@ var FB = (function () {
       text: "The shared-memory lock table coordinates concurrent access to " +
         "the database file. Writers queue at the tower when they collide; " +
         "the deadlock scanner occasionally sends one home to retry."
+    },
+    {
+      focus: "journal", zoom: 1.1, title: "REPL — replication without a log",
+      text: "Firebird has no write-ahead log to ship, so its replication is " +
+        "logical: committed changes are journalled into segments, sealed, " +
+        "and replayed on the replica in commit order. Asynchronous means the " +
+        "replica trails and commits never wait. Synchronous means the commit " +
+        "waits for the replica — and if that replica dies, commits hang " +
+        "rather than silently giving up durability. Break the replica from " +
+        "the control room and watch the segments stack up."
     },
     {
       focus: "gbak", zoom: 1.15, title: "Backup yard — gbak and nbackup",

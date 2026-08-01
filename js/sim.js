@@ -64,6 +64,20 @@ var Sim = (function () {
       // query trace
       tracedQ: null, traceStep: true, traceStage: null, traceNote: "",
 
+      // logical replication (Firebird 4+): journal segments, shipped and
+      // replayed on the replica in commit order
+      repl: {
+        mode: "async",        // off | async | sync
+        health: "healthy",    // healthy | slow | down
+        pending: 0,           // changes in the open segment
+        segments: [],         // sealed segments awaiting apply, in order
+        segNo: 1,
+        generated: 0, applied: 0,
+        syncWaits: 0,         // commits that waited on a synchronous replica
+        stalled: false,       // synchronous replica unreachable: commits hang
+        flash: 0, applyAcc: 0
+      },
+
       // operator decisions
       challenge: null,   // {id, at, snap} while a situation is live
       verdict: null,     // {id, choice, lines[], measuredFor} once answered
@@ -338,6 +352,7 @@ var Sim = (function () {
         // one page to disk. Dirty evictions stay rare on a healthy database
         // for exactly this reason — the cost lands at commit instead.
         flushDirty(s, 1);
+        replicateCommit(s, q);
         break;
       case "result":
         if (q.phase !== "rollback") q.phase = "result";
@@ -454,6 +469,103 @@ var Sim = (function () {
     if (s.sweepProgress >= 1.05) {
       s.sweepActive = false;
       say(s, "Sweep finished. City is clean.");
+    }
+  }
+
+  // ---- logical replication ---------------------------------------------
+  //
+  // Firebird has no WAL to ship, so replication is logical: the committed
+  // changes themselves are journalled into segments and replayed on the
+  // replica in commit order.
+
+  var SEGMENT_SIZE = 20;      // changes per journal segment (scaled)
+
+  /* A transaction committed. Journal its change, and in synchronous mode
+   * make the commit wait for the replica to have it. */
+  function replicateCommit(s, q) {
+    var r = s.repl;
+    if (r.mode === "off") return;
+
+    r.pending++;
+    r.generated++;
+    r.flash = 1;
+    if (r.pending >= SEGMENT_SIZE) {
+      r.segments.push({ n: r.segNo++, changes: r.pending });
+      r.pending = 0;
+    }
+
+    if (r.mode === "sync") {
+      if (r.health === "down") {
+        // A synchronous replica that is gone does not silently downgrade to
+        // asynchronous — the commit hangs. Pretending otherwise would be
+        // claiming a durability guarantee the configuration does not have.
+        r.stalled = true;
+        r.syncWaits++;
+        if (q) q.dwell += 6;
+      } else {
+        r.stalled = false;
+        r.syncWaits++;
+        if (q) q.dwell += r.health === "slow" ? 0.9 : 0.25;
+      }
+    } else {
+      r.stalled = false;
+    }
+  }
+
+  function tickReplication(s, dt) {
+    var r = s.repl;
+    if (r.flash > 0) r.flash -= dt * 2.2;
+    if (r.mode === "off" || r.health === "down") return;
+
+    // apply rate on the replica, in changes per second
+    var rate = r.health === "slow" ? 7 : 34;
+    r.applyAcc += rate * dt;
+    while (r.applyAcc >= 1 && r.segments.length) {
+      var seg = r.segments[0];
+      var take = Math.min(Math.floor(r.applyAcc), seg.changes);
+      seg.changes -= take;
+      r.applied += take;
+      r.applyAcc -= take;
+      if (seg.changes <= 0) r.segments.shift(); // commit order preserved
+      if (take === 0) break;
+    }
+    if (!r.segments.length) r.applyAcc = 0;
+  }
+
+  function replLag(s) {
+    return s.repl.generated - s.repl.applied;
+  }
+
+  function setReplMode(s, mode) {
+    var r = s.repl;
+    if (r.mode === mode) return;
+    r.mode = mode;
+    if (mode === "off") {
+      r.pending = 0;
+      r.segments = [];
+      r.stalled = false;
+      say(s, "Replication switched off. Journalling stopped and the backlog " +
+        "was discarded.");
+    } else {
+      r.stalled = false;
+      say(s, "Replication set to " + mode + ".");
+    }
+  }
+
+  function setReplHealth(s, health) {
+    var r = s.repl;
+    if (r.health === health) return;
+    r.health = health;
+    if (health === "down") {
+      say(s, r.mode === "sync"
+        ? "Replica unreachable — synchronous commits are now hanging."
+        : "Replica unreachable. Segments will accumulate until it returns.");
+    } else if (health === "slow") {
+      say(s, "Replica is applying slowly; lag will build.");
+    } else {
+      say(s, "Replica healthy again — catching up from segment " +
+        (r.segments.length ? r.segments[0].n : r.segNo) + ".");
+      r.stalled = false;
     }
   }
 
@@ -614,6 +726,12 @@ var Sim = (function () {
       setLongTxn(s, false);
       if (!s.backup.locked) lockNbackup(s);
       for (var k = 0; k < 20 * 60; k++) tick(s, 1 / 60);
+    } else if (id === "replicadown") {
+      s.queryRate = 12; s.updateRatio = 0.75;
+      setLongTxn(s, false);
+      setReplMode(s, "async");
+      setReplHealth(s, "down");
+      for (var m = 0; m < 45 * 60; m++) tick(s, 1 / 60);
     }
 
     s.challenge = { id: id, at: s.time, snap: snapshot(s) };
@@ -674,6 +792,29 @@ var Sim = (function () {
         lines.push("Cost: there is no backup tonight. You traded a recoverable " +
           "problem (bloat, which sweep fixes) for an unrecoverable one " +
           "(no backup if the disk dies before tomorrow).");
+      }
+    } else if (id === "replicadown") {
+      var segsWas = s.repl.segments.length, lagWas = replLag(s);
+      if (choice === "drop") {
+        setReplMode(s, "off");
+        runFor(s, 20);
+        lines.push("Replication stopped. " + segsWas + " unshipped segments " +
+          "(" + lagWas + " changes) discarded — the volume stops filling now.");
+        lines.push("The primary is unaffected and still committing.");
+        lines.push("Cost: the replica is no longer a replica. Bringing it " +
+          "back is a fresh backup and restore, not a resume — and until then " +
+          "you have no second copy.");
+      } else {
+        runFor(s, 40);
+        lines.push("You kept journalling. The backlog grew from " + segsWas +
+          " to " + s.repl.segments.length + " segments — " + replLag(s) +
+          " changes now waiting.");
+        lines.push("Nothing is lost, and the replica could still resume from " +
+          "segment " + (s.repl.segments.length ? s.repl.segments[0].n : s.repl.segNo) + ".");
+        lines.push("Cost: you are betting free space against the replica " +
+          "coming back, and the bet gets worse at a steady rate. If the " +
+          "volume fills, the primary stops too — a much larger outage than " +
+          "the one you were protecting against.");
       }
     } else if (id === "deltagrowing") {
       if (choice === "unlock") {
@@ -759,6 +900,7 @@ var Sim = (function () {
     tickSweep(s, dt);
     tickGbak(s, dt);
     tickNbackup(s, dt);
+    tickReplication(s, dt);
 
     // decay flashes
     var i;
@@ -803,6 +945,10 @@ var Sim = (function () {
     startChallenge: startChallenge,
     answerChallenge: answerChallenge,
     endChallenge: endChallenge,
+    setReplMode: setReplMode,
+    setReplHealth: setReplHealth,
+    replLag: replLag,
+    SEGMENT_SIZE: SEGMENT_SIZE,
     TABLE_COUNT: TABLE_COUNT,
     PAGE_SPACE: PAGE_SPACE
   };

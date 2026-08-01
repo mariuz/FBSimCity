@@ -26,6 +26,24 @@ Three honesty levels:
 | Rush hour ×60 | button | Injects 60 queries at once | **modeled** — a convenience for watching queueing |
 | Speed | 0.5–4× | Multiplies the simulation timestep | n/a — presentation only |
 
+## Replication
+
+Firebird 4+ logical replication. There is no write-ahead log to ship, so the
+committed changes themselves are journalled into segments and replayed on the
+replica in commit order.
+
+| Knob | Effect | Honesty |
+|---|---|---|
+| Replication mode | `off`, `asynchronous`, or `synchronous` | **real** — async lets the replica trail and never blocks a commit; sync makes the commit wait for the replica |
+| Replica health | `healthy`, `slow to apply`, `unreachable` | **modeled** — a single dial standing in for network, disk and load on the replica |
+| repl lag | Changes committed but not yet applied | **real** arithmetic (generated − applied), **scaled** magnitudes |
+| segments | Sealed journal segments waiting to ship | **real** structure — 20 changes per segment here, configurable in reality |
+
+The behaviour that matters most: **a synchronous replica that dies hangs
+commits.** It does not quietly fall back to asynchronous. Silently
+downgrading would mean claiming a durability guarantee the configuration no
+longer has, so the model refuses to do it.
+
 ## Backup yard
 
 | Knob | Effect | Honesty |
@@ -47,6 +65,7 @@ from the model rather than asserting it.
 | Sweep is blocked | Terminate the idle attachment, or wait for it | **real** — killing it advances the OIT and loses that transaction's work; waiting collects nothing |
 | The backup is holding the OIT | Let gbak finish, or cancel it | **real** trade — the bloat is recoverable by sweep, the missing backup is not |
 | The delta file is growing | Unlock and merge now, or wait for a quiet window | **real** — merging costs measured page writes at peak; waiting grows the delta and does not shrink the merge |
+| The replica is gone | Stop replication and discard the backlog, or keep journalling and wait | **real** — dropping frees the disk but the replica needs a fresh restore, not a resume; waiting risks the volume filling and taking the primary with it |
 
 The numbers quoted back to you in a verdict (versions collected, page writes,
 hit ratio, delta size) are measured from the run, not written in advance.
@@ -84,7 +103,11 @@ has to discover them by reading the source:
 - **Commit-order snapshots (Firebird 4+) are not modeled.** Visibility here
   is a simple `txn < OIT` comparison.
 - **One database, one attachment pool, no Classic/Super distinction**, no
-  page-level locks, no ASTs, no replication.
+  page-level locks, no ASTs.
+- **Replication is one replica and one dial.** Real deployments have several
+  replicas with independent lag, selective replication via
+  `RDB$PUBLICATIONS`, journal archiving, and apply errors that stop
+  replication until a human intervenes. None of that is here.
 - **Sweep is time-triggered**, not transaction-gap-triggered (see above).
 - **The traced query is spared deadlocks** so the guided walk stays
   predictable. Real transactions enjoy no such courtesy.

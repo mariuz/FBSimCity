@@ -96,6 +96,30 @@ var UI = (function () {
       focus: "gbak", zoom: 1.1,
       msg: "The nightly backup starts against a live workload. Watch the OIT pin itself for the whole run."
     },
+    replicalag: {
+      label: "Replica falling behind",
+      set: { rate: 14, writes: 80, cache: 64, sweepint: 25, sweepon: true, longtxn: false },
+      run: function (s) {
+        Sim.setReplMode(s, "async");
+        Sim.setReplHealth(s, "slow");
+        setSelect("ctl-replmode", "async");
+        setSelect("ctl-replhealth", "slow");
+      },
+      focus: "journal", zoom: 1.1,
+      msg: "Heavy writes against a replica that applies slowly. Segments seal faster than they drain."
+    },
+    syncstall: {
+      label: "Synchronous replica dies",
+      set: { rate: 8, writes: 70, cache: 64, sweepint: 25, sweepon: true, longtxn: false },
+      run: function (s) {
+        Sim.setReplMode(s, "sync");
+        Sim.setReplHealth(s, "down");
+        setSelect("ctl-replmode", "sync");
+        setSelect("ctl-replhealth", "down");
+      },
+      focus: "replicator", zoom: 1.2,
+      msg: "Synchronous replication with an unreachable replica: commits hang rather than quietly losing durability."
+    },
     nbackup: {
       label: "nbackup with delta",
       set: { rate: 10, writes: 70, cache: 64, sweepint: 25, sweepon: true, longtxn: false },
@@ -125,6 +149,11 @@ var UI = (function () {
     var el = $(id);
     el.value = v;
     el.dispatchEvent(new Event("input"));
+  }
+
+  function setSelect(id, v) {
+    var el = $(id);
+    if (el && el.value !== v) el.value = v;
   }
 
   function setCheck(id, v) {
@@ -170,6 +199,12 @@ var UI = (function () {
     });
     $("ctl-scenario").addEventListener("change", function () {
       if (this.value) applyScenario(this.value);
+    });
+    $("ctl-replmode").addEventListener("change", function () {
+      Sim.setReplMode(sim, this.value);
+    });
+    $("ctl-replhealth").addEventListener("change", function () {
+      Sim.setReplHealth(sim, this.value);
     });
     $("btn-sweep").addEventListener("click", function () {
       Sim.startSweep(sim, true);
@@ -492,6 +527,26 @@ var UI = (function () {
           return s.backup.locked ? "Unlock & merge delta" : "Lock database (-L)";
         }, fn: function (s) { Sim.toggleLock(s); } }
     ],
+    replica: [
+      { id: "act-replhealth", label: function (s) {
+          return s.repl.health === "down" ? "Bring the replica back"
+                                          : "Break the replica";
+        }, fn: function (s) {
+          var next = s.repl.health === "down" ? "healthy" : "down";
+          Sim.setReplHealth(s, next);
+          setSelect("ctl-replhealth", next);
+        } }
+    ],
+    replicator: [
+      { id: "act-replmode", label: function (s) {
+          return s.repl.mode === "sync" ? "Switch to asynchronous"
+                                        : "Switch to synchronous";
+        }, fn: function (s) {
+          var next = s.repl.mode === "sync" ? "async" : "sync";
+          Sim.setReplMode(s, next);
+          setSelect("ctl-replmode", next);
+        } }
+    ],
     tra: [
       { id: "act-longtxn", label: function (s) {
           return s.pinned !== null ? "Commit the forgotten transaction"
@@ -722,6 +777,15 @@ var UI = (function () {
     cls(bEl, bcls);
     $("st-delta").textContent = bk.deltaPages;
     cls($("st-delta"), bk.deltaPages > 250 ? "bad" : bk.deltaPages > 0 ? "warn" : "");
+
+    var rp = s.repl, lag = Sim.replLag(s);
+    var lagEl = $("st-lag");
+    lagEl.textContent = rp.mode === "off" ? "off" : (rp.stalled ? "HUNG" : lag);
+    cls(lagEl, rp.mode === "off" ? "" :
+      rp.stalled || lag > 400 ? "bad" : lag > 80 ? "warn" : "good");
+    $("st-segs").textContent = rp.segments.length;
+    cls($("st-segs"), rp.segments.length > 16 ? "bad" :
+      rp.segments.length > 4 ? "warn" : "");
 
     // Model time, not wall time: the city runs on its own clock, which warp
     // and the speed control move faster than yours.

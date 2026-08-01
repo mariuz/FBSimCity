@@ -38,7 +38,14 @@ html, body {
   color: transparent;
 }
 #topbar .sub { font-size: 12.5px; color: #9aa7d4; }
-#topbar nav { margin-left: auto; display: flex; gap: 8px; pointer-events: auto; }
+#topbar nav {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  pointer-events: auto;
+}
 
 button, .ghlink {
   font: 600 12.5px "Segoe UI", sans-serif;
@@ -560,10 +567,15 @@ body.day #info-close, body.day #tour-close, body.day #trace-end, body.day .overl
 body.day #info-close:hover, body.day #tour-close:hover, body.day #trace-end:hover, body.day .overlay-close:hover { color: #141c36; }
 
 /* ---- small screens ---- */
+/* The nav has grown a button per release; drop the decorative subtitle well
+   before it starts pushing the bar onto a second row. */
+@media (max-width: 1150px) {
+  #topbar .sub { display: none; }
+  #topbar nav button, #topbar nav .ghlink { padding: 5px 9px; font-size: 12px; }
+}
 @media (max-width: 900px) {
   #controls { width: 200px; top: 54px; }
   #info-panel { width: min(300px, calc(100vw - 24px)); }
-  #topbar .sub { display: none; }
 }
 @media (max-width: 640px) {
   #controls {
@@ -573,6 +585,10 @@ body.day #info-close:hover, body.day #tour-close:hover, body.day #trace-end:hove
     overflow-y: auto;
   }
   #event-log { display: none; }
+  /* eleven nav items will always wrap on a phone; make them cost less */
+  #topbar { padding: 8px 10px; }
+  #topbar nav { gap: 4px; }
+  #topbar nav button, #topbar nav .ghlink { padding: 4px 7px; font-size: 11.5px; }
   /* iOS Safari zooms the whole page when a focused control is under 16px.
      Keep every focusable form control at 16px on phones. */
   #ctl-scenario,

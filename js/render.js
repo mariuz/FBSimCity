@@ -22,7 +22,10 @@ var Render = (function () {
       labelDim: "rgba(150,165,215,0.7)",
       tipOk: "#ffe066", tipBad: "#ff8787", tipAlert: "#ff6b6b",
       deltaWallX: "#2b1608", deltaWallY: "#3a1e0b", deltaFloor: "#241305",
-      deltaStroke: "rgba(232,140,60,0.35)", deltaLabel: "rgba(255,190,140,0.5)"
+      deltaStroke: "rgba(232,140,60,0.35)", deltaLabel: "rgba(255,190,140,0.5)",
+      replWallX: "#1d1440", replWallY: "#261a52", replFloor: "#181035",
+      replDeadX: "#2a1420", replDeadY: "#341a28",
+      replStroke: "rgba(150,120,240,0.35)", replLabel: "rgba(200,180,255,0.6)"
     },
     day: {
       bgTop: "#dbe4f3", bgBot: "#eef3fb",
@@ -38,7 +41,10 @@ var Render = (function () {
       labelDim: "rgba(60,80,140,0.8)",
       tipOk: "#8a5a00", tipBad: "#b02525", tipAlert: "#c92a2a",
       deltaWallX: "#e2cbb6", deltaWallY: "#d6bca4", deltaFloor: "#eeddcc",
-      deltaStroke: "rgba(190,110,40,0.5)", deltaLabel: "rgba(150,80,20,0.8)"
+      deltaStroke: "rgba(190,110,40,0.5)", deltaLabel: "rgba(150,80,20,0.8)",
+      replWallX: "#cfc6ee", replWallY: "#c0b5e6", replFloor: "#e2dcf5",
+      replDeadX: "#e6cdd6", replDeadY: "#dcbfcb",
+      replStroke: "rgba(110,80,200,0.5)", replLabel: "rgba(80,50,170,0.85)"
     }
   };
   var T = THEMES.dark;
@@ -305,6 +311,65 @@ var Render = (function () {
     }
   }
 
+  /* The replica: a second database, drawn as a shallower pit than the
+   * primary's excavation because it is the same history, not the same file. */
+  function drawReplica(ctx, cam, s) {
+    var b = FB.byId.replica, r = s.repl;
+    var depth = 0.7;
+    var a0 = proj(cam, b.x, b.y, 0), b0 = proj(cam, b.x + b.w, b.y, 0),
+        c0 = proj(cam, b.x + b.w, b.y + b.d, 0), d0 = proj(cam, b.x, b.y + b.d, 0),
+        a1 = proj(cam, b.x, b.y, -depth), b1 = proj(cam, b.x + b.w, b.y, -depth),
+        c1 = proj(cam, b.x + b.w, b.y + b.d, -depth), d1 = proj(cam, b.x, b.y + b.d, -depth);
+    var dead = r.mode === "off" || r.health === "down";
+    poly(ctx, [a0, b0, b1, a1], dead ? T.replDeadX : T.replWallX);
+    poly(ctx, [a0, d0, d1, a1], dead ? T.replDeadY : T.replWallY);
+    poly(ctx, [a1, b1, c1, d1], T.replFloor, T.replStroke, 1);
+
+    // applied history, drawn as filled rows of the replica's floor
+    var rows = 8, cols = 6;
+    var filled = r.generated > 0
+      ? Math.round((r.applied / Math.max(1, r.generated)) * rows * cols) : 0;
+    for (var i = 0; i < rows * cols; i++) {
+      var rx = b.x + 0.7 + (i % cols) * ((b.w - 1.4) / (cols - 1));
+      var ry = b.y + 0.7 + Math.floor(i / cols) * ((b.d - 1.4) / (rows - 1));
+      var p = proj(cam, rx, ry, -depth + 0.05);
+      ctx.fillStyle = i < filled ? "rgba(132,94,247,0.85)" : "rgba(120,110,180,0.18)";
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], 2.4 * cam.zoom, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (cam.zoom > 0.55) {
+      ctx.fillStyle = dead ? "#ff8787" : T.replLabel;
+      ctx.font = (10 * Math.min(cam.zoom, 1.3)) + "px 'Segoe UI', sans-serif";
+      var lp = proj(cam, b.x + 0.4, b.y + b.d - 0.3, -depth);
+      var label = r.mode === "off" ? "replication off"
+        : r.health === "down" ? "REPLICA UNREACHABLE"
+        : r.health === "slow" ? "applying slowly — lag " + Sim.replLag(s)
+        : "in step (lag " + Sim.replLag(s) + ")";
+      ctx.fillText(label, lp[0], lp[1]);
+    }
+  }
+
+  /* Sealed journal segments waiting to ship, stacked in the yard. */
+  function drawJournal(ctx, cam, s) {
+    var b = FB.byId.journal, r = s.repl;
+    var n = Math.min(r.segments.length, 24);
+    for (var i = 0; i < n; i++) {
+      var col = i % 6, row = Math.floor(i / 6);
+      var sx = b.x + 0.4 + col * 0.75;
+      var sy = b.y + b.d + 0.5 + row * 0.7;
+      var over = r.segments.length > 16;
+      drawBox(ctx, cam, sx, sy, 0.55, 0.5, 0.35 + (i % 3) * 0.12,
+        over ? "#ff6b6b" : "#845ef7", 0);
+    }
+    if (r.segments.length > 24 && cam.zoom > 0.6) {
+      var mp = proj(cam, b.x + 0.4, b.y + b.d + 3.4, 0);
+      ctx.fillStyle = "#ff8787";
+      ctx.font = "600 " + (10 * Math.min(cam.zoom, 1.2)) + "px 'Segoe UI', sans-serif";
+      ctx.fillText("+" + (r.segments.length - 24) + " more segments", mp[0], mp[1]);
+    }
+  }
+
   function towerColor(v) {
     // blue -> red as the chain grows (hex, so shade() can parse it)
     var t = Math.min(1, (v - 1) / 14);
@@ -319,7 +384,7 @@ var Render = (function () {
     var list = [];
     FB.buildings.forEach(function (b) {
       if (b.id === "cache" || b.id === "pio" || b.id === "mvcc" ||
-          b.id === "delta") return;
+          b.id === "delta" || b.id === "replica") return;
       var glow = 0;
       if (b.id === hoverId || b.id === selectedId) glow = 1;
       if (b.id === "tra" && (s.pinned !== null || s.backup.gbakTxn !== null)) {
@@ -330,6 +395,12 @@ var Render = (function () {
       }
       if (b.id === "nbackup" && (s.backup.nbActive || s.backup.locked)) {
         glow = Math.max(glow, pulse(time, 4));
+      }
+      if (b.id === "journal" && s.repl.flash > 0) {
+        glow = Math.max(glow, s.repl.flash);
+      }
+      if (b.id === "replicator" && s.repl.stalled) {
+        glow = Math.max(glow, pulse(time, 6));
       }
       list.push({
         key: b.x + b.w + b.y + b.d, type: "box",
@@ -493,7 +564,9 @@ var Render = (function () {
     drawGround(ctx, cam, cw, ch);
     drawStorage(ctx, cam, s);
     drawDelta(ctx, cam, s);
+    drawReplica(ctx, cam, s);
     drawCachePlaza(ctx, cam, s);
+    drawJournal(ctx, cam, s);
     var list = collectDrawables(s, hoverId, selectedId, time);
     for (var i = 0; i < list.length; i++) {
       var d = list[i];

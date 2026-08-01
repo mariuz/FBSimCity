@@ -16,9 +16,9 @@
   <span class="sub">an explorable city of <strong>Firebird</strong> internals</span>
   <nav>
     <button id="btn-tour" class="primary">Guided tour</button>
-    <button id="btn-trace">Trace a query</button>
-    <button id="btn-anatomy">Page anatomy</button>
-    <button id="btn-decide">Decisions</button>
+    <button id="btn-trace" title="Follow one query through every station">Trace</button>
+    <button id="btn-anatomy" title="Anatomy of a Firebird data page">Anatomy</button>
+    <button id="btn-decide" title="Operator decisions with real consequences">Decisions</button>
     <a class="ghlink" href="lifecycle.html" title="Accessible text walk of the whole pipeline">Lifecycle</a>
     <button id="btn-pause">⏸ Pause</button>
     <button id="btn-speed">1×</button>
@@ -46,6 +46,8 @@
       <option value="sweepstorm">Sweep storm</option>
       <option value="nightlygbak">Nightly gbak on a busy DB</option>
       <option value="nbackup">nbackup with delta</option>
+      <option value="replicalag">Replica falling behind</option>
+      <option value="syncstall">Synchronous replica dies</option>
     </select>
   </div>
 
@@ -83,6 +85,24 @@
     <button id="btn-burst">Rush hour ×60</button>
   </div>
 
+  <h2 class="sub-head">Replication</h2>
+  <div class="ctl">
+    <label for="ctl-replmode">Mode</label>
+    <select id="ctl-replmode">
+      <option value="off">off</option>
+      <option value="async" selected>asynchronous</option>
+      <option value="sync">synchronous</option>
+    </select>
+  </div>
+  <div class="ctl">
+    <label for="ctl-replhealth">Replica</label>
+    <select id="ctl-replhealth">
+      <option value="healthy" selected>healthy</option>
+      <option value="slow">slow to apply</option>
+      <option value="down">unreachable</option>
+    </select>
+  </div>
+
   <h2 class="sub-head">Backup yard</h2>
   <div class="btnrow">
     <button id="btn-gbak" title="Logical backup — pins the OIT while it runs">gbak</button>
@@ -116,8 +136,9 @@
   <span class="stat">rollbacks <b id="st-rb"></b></span>
   <span class="stat">backup <b id="st-backup"></b></span>
   <span class="stat">delta <b id="st-delta"></b></span>
+  <span class="stat">repl lag <b id="st-lag"></b> <span class="dim">(<b id="st-segs"></b> seg)</span></span>
   <span class="stat">model clock <b id="st-clock"></b></span>
-  <span class="stat version">v0.5.0</span>
+  <span class="stat version">v0.6.0</span>
 </footer>
 
 <div id="decide-dock" class="hidden">
