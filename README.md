@@ -60,6 +60,12 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
 - **Flip on "Long-running transaction."** The OIT pins, the sweep truck is
   not allowed to demolish anything, and the version towers grow and turn
   red — Firebird's version of bloat. Flip it off and hit **Sweep now**.
+- **Make an operator decision.** Three situations where Firebird hands you a
+  genuinely hard call — an idle transaction blocking sweep, a backup holding
+  the OIT through peak, a forgotten nbackup lock growing its delta. Both
+  answers cost something, and the verdict is measured from what actually
+  happened in the model: how many versions were collected, how many page
+  writes the merge cost, what the hit ratio did while it ran.
 - **Run the nightly gbak** from the backup yard while the city is busy, and
   watch the OIT pin itself to gbak's snapshot for the whole run — the reason
   a nightly backup and a bloating database are so often the same story.
@@ -109,7 +115,13 @@ intuition, not documentation — corrections welcome via issues and PRs.
 **[docs/KNOBS.md](docs/KNOBS.md) audits every control**: what it does to the
 model, and whether the mechanism is real, merely scaled, or a plausible
 stand-in — plus the deliberate simplifications, listed so nobody has to
-discover them by reading the source.
+discover them by reading the source, and a section on where the model is
+*kinder* than Firebird and where it is *harsher*, since divergence runs both
+ways.
+
+Animation respects `prefers-reduced-motion`: the pulsing, the sweeping lock
+beacon and the blinking OIT warning stop, while everything that carries
+information — colours, counters, particle movement — stays.
 
 ## Running locally
 
@@ -133,7 +145,27 @@ then open <http://localhost:8000/>.
 - `js/main.js` — camera, input, main loop
 - `lifecycle.html` — the accessible text walk of the pipeline
 - `docs/KNOBS.md` — knob audit: what every control really does
+- `test/` — the test suite (open `test/index.html`; no framework, no build)
 - `tools/screenshot.ps1` — regenerates `docs/screenshot.png` from a deep link
+
+## Tests
+
+Open [`test/index.html`](test/) in a browser. It runs the real simulation and
+asserts against the real DOM and the real docs — no framework, no build step,
+nothing to install.
+
+Most of the suite exists to catch **drift**. It checks that every control in
+the UI is documented in `docs/KNOBS.md` and that every documented knob
+produces a measurable change in the model; that every scenario in the picker
+appears in the README; that `js/sim.js` never reaches for the DOM, the canvas
+or the render layer, because it is documented as pure; that both answers to
+every operator decision produce different, measured verdicts; and that the
+colour pairs carrying meaning — cache hit versus miss, SQL versus BLR — stay
+distinguishable, including under simulated deuteranopia.
+
+That last check earned its keep immediately: it found that the hit and miss
+flashes had a contrast ratio of 1.18, meaning they differed in hue but barely
+in brightness. They now differ in hue, luminance *and* size.
 
 **Camera:** drag to pan, scroll or pinch to zoom, arrow keys to pan, `+` / `−`
 to zoom. There is no rotation — the city is a fixed isometric projection.

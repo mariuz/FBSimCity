@@ -16,6 +16,7 @@ Three honesty levels:
 
 | Knob | Range | Effect | Honesty |
 |---|---|---|---|
+| Scenario | 8 presets | Sets the sliders and switches to a named situation, seeds the event log, and flies the camera to the district it is about | n/a — a shortcut for the knobs below, it adds no mechanism of its own |
 | Query rate | 0–20 q/s | Spawn rate of query particles | **scaled** — a real server does thousands/s; this is what fits on screen |
 | Write mix | 0–100% | Share of queries that take a lock, write a version and commit | **real** — the read/write split drives everything downstream |
 | Page cache | 16–128 buffers | Size of the LRU buffer cache | **scaled** — Firebird's default is 2048 pages; the hot set here is 40 pages, so 64 covers it and 16 thrashes |
@@ -35,6 +36,21 @@ Three honesty levels:
 | Lock / unlock | Freezes the main file; page writes divert to the difference file until merged back | **real** — this is what `nbackup -L` / `-N` do |
 | Restore chain | Prints which levels a restore would apply, in order | **real** — reporting only, nothing is restored |
 
+## Operator decisions
+
+Three situations where both answers cost something. Each one sets the world
+into the situation for real, then measures the consequence of your choice
+from the model rather than asserting it.
+
+| Decision | The call | Honesty |
+|---|---|---|
+| Sweep is blocked | Terminate the idle attachment, or wait for it | **real** — killing it advances the OIT and loses that transaction's work; waiting collects nothing |
+| The backup is holding the OIT | Let gbak finish, or cancel it | **real** trade — the bloat is recoverable by sweep, the missing backup is not |
+| The delta file is growing | Unlock and merge now, or wait for a quiet window | **real** — merging costs measured page writes at peak; waiting grows the delta and does not shrink the merge |
+
+The numbers quoted back to you in a verdict (versions collected, page writes,
+hit ratio, delta size) are measured from the run, not written in advance.
+
 ## What the readouts mean
 
 | Readout | Source | Honesty |
@@ -49,6 +65,7 @@ Three honesty levels:
 | deadlock rollbacks | Waiters chosen as deadlock victims | **modeled** — 6% of waits, not a real wait-for graph |
 | backup | Current backup state, or the completed level chain | **real** |
 | delta | Pages sitting in the difference file | **real** counting, **scaled** capacity |
+| model clock | Elapsed time inside the simulation, with the speed multiplier and pause state | **real** — it is the model's own clock, which warp and the speed control move faster than yours |
 
 ## Deliberate simplifications
 
@@ -75,3 +92,27 @@ has to discover them by reading the source:
 If one of these matters for what you are trying to understand, read the
 [Conceptual Architecture for Firebird](https://github.com/mariuz/conceptual-architecture-for-firebird-paper)
 companions instead — they are grounded in the actual source.
+
+## Divergence runs both ways
+
+Worth stating plainly, because a list of simplifications only ever shows one
+direction: the model is *kinder* than Firebird in some places and *harsher*
+in others.
+
+**Kinder than reality:** lock contention is a flat probability rather than a
+real wait-for graph, so pathological convoys never form. The traced query is
+spared deadlocks. Page access follows a tidy two-tier distribution instead of
+whatever your schema actually does. Sweep always finishes.
+
+**Harsher than reality:** the cache is tiny (16–128 buffers against a 40-page
+hot set), so thrashing appears at a scale no production instance would see.
+Version chains are capped at 26 for display, which flatters a stuck OIT —
+real chains have no such mercy. gbak takes twelve seconds here and hours in
+production, so the OIT pin looks survivable when it may not be.
+
+## Keeping this file honest
+
+`test/` asserts that every control listed above exists in the UI and is
+documented here, that every scenario in the picker appears in the README,
+and that each knob produces a measurable change in the model. Adding a
+control without documenting it fails the suite.

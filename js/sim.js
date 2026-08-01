@@ -64,6 +64,10 @@ var Sim = (function () {
       // query trace
       tracedQ: null, traceStep: true, traceStage: null, traceNote: "",
 
+      // operator decisions
+      challenge: null,   // {id, at, snap} while a situation is live
+      verdict: null,     // {id, choice, lines[], measuredFor} once answered
+
       // disk activity marker for the renderer
       diskFlash: 0, diskPos: 0.5,
 
@@ -576,6 +580,145 @@ var Sim = (function () {
     }).join(" → ") + " in order — " + total + " pages.");
   }
 
+  // ---- operator decisions ----------------------------------------------
+  //
+  // Each situation is set up for real in the model, both answers cost
+  // something, and the verdict is measured from what actually happened
+  // rather than asserted.
+
+  function snapshot(s) {
+    return {
+      time: s.time, versions: s.totalVersions, oit: s.oit,
+      pageWrites: s.pageWrites, delta: s.backup.deltaPages,
+      hitRatio: s.hitRatio, dirty: s.dirtyEvictions
+    };
+  }
+
+  function startChallenge(s, id) {
+    var def = null;
+    FB.challenges.forEach(function (c) { if (c.id === id) def = c; });
+    if (!def) return;
+
+    // put the world into the situation
+    if (id === "sweepblock") {
+      s.queryRate = 10; s.updateRatio = 0.6;
+      if (s.pinned === null) setLongTxn(s, true);
+      for (var i = 0; i < 25 * 60; i++) tick(s, 1 / 60); // let it accumulate
+    } else if (id === "gbakwindow") {
+      s.queryRate = 10; s.updateRatio = 0.55;
+      setLongTxn(s, false);
+      if (!s.backup.gbakActive) startGbak(s);
+      for (var j = 0; j < 4 * 60; j++) tick(s, 1 / 60);
+    } else if (id === "deltagrowing") {
+      s.queryRate = 11; s.updateRatio = 0.7;
+      setLongTxn(s, false);
+      if (!s.backup.locked) lockNbackup(s);
+      for (var k = 0; k < 20 * 60; k++) tick(s, 1 / 60);
+    }
+
+    s.challenge = { id: id, at: s.time, snap: snapshot(s) };
+    s.verdict = null;
+    say(s, "Decision: " + def.title + ".");
+  }
+
+  function answerChallenge(s, choice) {
+    var ch = s.challenge;
+    if (!ch) return;
+    var before = ch.snap, id = ch.id, lines = [];
+
+    if (id === "sweepblock") {
+      if (choice === "kill") {
+        var lostTxn = s.pinned;
+        setLongTxn(s, false);
+        startSweep(s, true);
+        runFor(s, 8);
+        lines.push("Attachment terminated. Transaction " + lostTxn +
+          " rolled back — whatever it had done is gone.");
+        lines.push("The OIT advanced to " + s.oit + " and sweep collected " +
+          (before.versions - s.totalVersions) + " versions. " +
+          s.totalVersions + " remain.");
+        lines.push("Cost: one rolled-back transaction, and an application " +
+          "team who will ask why their session died.");
+      } else {
+        runFor(s, 30);
+        lines.push("You waited 30 more seconds. The OIT never moved — still " +
+          s.oit + ".");
+        lines.push("Versions went from " + before.versions + " to " +
+          s.totalVersions + ", and every sweep in that window was skipped.");
+        lines.push("Cost: nothing was lost, and nothing was collected. " +
+          "Waiting is only free if the session actually commits.");
+      }
+    } else if (id === "gbakwindow") {
+      if (choice === "finish") {
+        runUntil(s, function (x) { return !x.backup.gbakActive; }, 20);
+        var atFinish = s.totalVersions;
+        startSweep(s, true);
+        runFor(s, 8);
+        lines.push("Backup completed. You have tonight's gbak.");
+        lines.push("Versions peaked at " + atFinish + " while the snapshot " +
+          "held the OIT; sweep afterwards brought them back to " +
+          s.totalVersions + ".");
+        lines.push("Cost: a window of stalled GC, paid back once the backup " +
+          "released the OIT. Usually the right trade — the backup is the " +
+          "thing you cannot recreate.");
+      } else {
+        s.backup.gbakActive = false;
+        s.backup.gbakProgress = 0;
+        s.backup.gbakTxn = null;
+        refreshMarkers(s);
+        startSweep(s, true);
+        runFor(s, 8);
+        lines.push("gbak cancelled. The OIT advanced to " + s.oit +
+          " and sweep collected immediately — " + s.totalVersions +
+          " versions remain.");
+        lines.push("Cost: there is no backup tonight. You traded a recoverable " +
+          "problem (bloat, which sweep fixes) for an unrecoverable one " +
+          "(no backup if the disk dies before tomorrow).");
+      }
+    } else if (id === "deltagrowing") {
+      if (choice === "unlock") {
+        var deltaWas = s.backup.deltaPages;
+        unlockNbackup(s);
+        runFor(s, 6);
+        lines.push("Unlocked. " + deltaWas + " pages merged back into the " +
+          "database file.");
+        lines.push("That merge cost " + (s.pageWrites - before.pageWrites) +
+          " page writes during peak, and the cache hit ratio sat at " +
+          Math.round(s.hitRatio * 100) + "% while it ran.");
+        lines.push("Cost: I/O at the worst hour. The delta is now zero and " +
+          "the main file is live again.");
+      } else {
+        runFor(s, 30);
+        lines.push("You waited. The delta grew from " + before.delta +
+          " to " + s.backup.deltaPages + " pages.");
+        lines.push("The main file is still frozen, so nothing was written to " +
+          "it in that time — every one of those writes is sitting in the " +
+          "difference file.");
+        lines.push("Cost: you avoided merge I/O and bet the volume's free " +
+          "space instead. That bet gets worse the longer the lock is held, " +
+          "and the merge you deferred did not get smaller.");
+      }
+    }
+
+    s.verdict = { id: id, choice: choice, lines: lines };
+    s.challenge = null;
+  }
+
+  function endChallenge(s) {
+    s.challenge = null;
+    s.verdict = null;
+  }
+
+  /* deterministic fast-forward helpers used by the decision consequences */
+  function runFor(s, seconds) {
+    for (var i = 0; i < seconds * 60; i++) tick(s, 1 / 60);
+  }
+
+  function runUntil(s, pred, maxSeconds) {
+    var n = maxSeconds * 60;
+    while (n-- > 0 && !pred(s)) tick(s, 1 / 60);
+  }
+
   // ---- public API ------------------------------------------------------
 
   function setLongTxn(s, on) {
@@ -657,6 +800,9 @@ var Sim = (function () {
     startNbackup: startNbackup,
     toggleLock: toggleLock,
     restoreChain: restoreChain,
+    startChallenge: startChallenge,
+    answerChallenge: answerChallenge,
+    endChallenge: endChallenge,
     TABLE_COUNT: TABLE_COUNT,
     PAGE_SPACE: PAGE_SPACE
   };

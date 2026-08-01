@@ -367,6 +367,71 @@ body.day button.act:hover { background: rgba(210,120,30,0.25); }
 #stats .dim { color: #5f6c99; }
 body.day #stats .dim { color: #7c88b4; }
 
+/* ---- operator decisions dock ---- */
+#decide-dock {
+  position: fixed;
+  right: 12px;
+  top: 60px;
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  background: rgba(16,20,40,0.95);
+  border: 1px solid rgba(255,169,77,0.45);
+  border-radius: 12px;
+  padding: 12px 16px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  z-index: 12;
+}
+#decide-dock h3 { font-size: 14px; color: #ffc078; }
+#decide-dock h4 { font-size: 13.5px; color: #fff; margin: 6px 0 5px; }
+#decide-dock p { font-size: 12.5px; line-height: 1.5; color: #cdd6f6; margin-bottom: 8px; }
+#decide-close {
+  position: absolute;
+  top: 6px; right: 8px;
+  background: none; border: none;
+  font-size: 18px; color: #8b97c4; padding: 2px 6px;
+}
+#decide-close:hover { color: #fff; background: none; }
+
+.decide-options { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+button.decide-opt {
+  text-align: left;
+  padding: 9px 12px;
+  background: rgba(40,50,90,0.7);
+  border: 1px solid rgba(130,150,220,0.4);
+  border-radius: 8px;
+  line-height: 1.45;
+}
+button.decide-opt:hover { background: rgba(60,75,130,0.9); border-color: rgba(255,169,77,0.6); }
+button.decide-opt b { display: block; font-size: 12.5px; color: #ffd8a8; margin-bottom: 2px; }
+button.decide-opt span { display: block; font-size: 11.5px; color: #9aa7d4; font-weight: 400; }
+
+.decide-chose { color: #9aa7d4 !important; }
+.decide-chose b { color: #ffd8a8; }
+.verdict {
+  border-left: 3px solid rgba(255,169,77,0.6);
+  padding-left: 11px;
+  margin: 8px 0;
+}
+.verdict p:last-child { color: #ffd8a8 !important; margin-bottom: 0; }
+.decide-live { color: #74c0fc !important; font-size: 11.5px !important; }
+
+body.day #decide-dock { background: rgba(252,253,255,0.96); border-color: rgba(210,120,30,0.5); }
+body.day #decide-dock h3 { color: #b26b00; }
+body.day #decide-dock h4 { color: #141c36; }
+body.day #decide-dock p { color: #33406b; }
+body.day button.decide-opt { background: rgba(240,244,252,0.9); border-color: rgba(90,110,180,0.4); }
+body.day button.decide-opt b { color: #8a5a00; }
+body.day button.decide-opt span { color: #51619b; }
+body.day .verdict p:last-child { color: #8a5a00 !important; }
+body.day .decide-live { color: #1971c2 !important; }
+
+/* ---- reduced motion: keep the meaning, drop the movement ---- */
+@media (prefers-reduced-motion: reduce) {
+  #gesture-hint { animation: none; opacity: 0.9; }
+  * { transition-duration: 0.01ms !important; }
+}
+
 /* ---- close-range "you are here" chip ---- */
 #whereami {
   position: fixed;

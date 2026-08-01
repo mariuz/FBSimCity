@@ -44,6 +44,20 @@ var Render = (function () {
   var T = THEMES.dark;
   var themeName = "dark";
 
+  /* Respect prefers-reduced-motion: the information is in the colours and
+   * the numbers, not in the pulsing, so the decorative animation stops
+   * while everything that carries meaning stays. */
+  var calm = false;
+  try {
+    var mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    calm = mq.matches;
+    mq.addEventListener("change", function (e) { calm = e.matches; });
+  } catch (e) { }
+
+  function pulse(time, speed) {
+    return calm ? 1 : 0.5 + 0.5 * Math.sin(time * speed);
+  }
+
   function setTheme(name) {
     if (THEMES[name]) { T = THEMES[name]; themeName = name; }
   }
@@ -180,11 +194,17 @@ var Render = (function () {
       if (slot.page >= 0) fill = T.cacheResident;
       diamond(ctx, cam, cx, cy, 0.24, fill, null);
       if (slot.flash > 0) {
-        var col = slot.state === 2 ? "255,107,107" :
-                  slot.state === 3 ? "252,196,25" : "64,192,87";
+        // Redundant encoding: hit, miss and dirty differ in hue, in
+        // luminance and in size, so none of the three depends on colour
+        // vision alone. A miss is drawn largest — it is the one that cost
+        // you a trip to the database file.
+        var col, r;
+        if (slot.state === 2) { col = "224,49,49"; r = 0.38; }        // miss
+        else if (slot.state === 3) { col = "252,196,25"; r = 0.31; }  // dirty
+        else { col = "81,207,102"; r = 0.26; }                        // hit
         ctx.save();
         ctx.globalAlpha = Math.max(0, slot.flash);
-        diamond(ctx, cam, cx, cy, 0.3, "rgba(" + col + ",0.9)", null);
+        diamond(ctx, cam, cx, cy, r, "rgba(" + col + ",0.92)", null);
         ctx.restore();
       }
     }
@@ -303,13 +323,13 @@ var Render = (function () {
       var glow = 0;
       if (b.id === hoverId || b.id === selectedId) glow = 1;
       if (b.id === "tra" && (s.pinned !== null || s.backup.gbakTxn !== null)) {
-        glow = Math.max(glow, 0.5 + 0.5 * Math.sin(time * 5));
+        glow = Math.max(glow, pulse(time, 5));
       }
       if (b.id === "gbak" && s.backup.gbakActive) {
-        glow = Math.max(glow, 0.5 + 0.5 * Math.sin(time * 4));
+        glow = Math.max(glow, pulse(time, 4));
       }
       if (b.id === "nbackup" && (s.backup.nbActive || s.backup.locked)) {
-        glow = Math.max(glow, 0.5 + 0.5 * Math.sin(time * 4));
+        glow = Math.max(glow, pulse(time, 4));
       }
       list.push({
         key: b.x + b.w + b.y + b.d, type: "box",
@@ -417,7 +437,7 @@ var Render = (function () {
       ctx.fillStyle = s.pinned !== null ? T.tipBad : T.tipOk;
       ctx.fillText("Next " + s.next + "  OAT " + s.oat + "  OIT " + s.oit,
         tp[0], tp[1]);
-      if (s.pinned !== null && Math.floor(time * 2) % 2 === 0) {
+      if (s.pinned !== null && (calm || Math.floor(time * 2) % 2 === 0)) {
         ctx.fillStyle = T.tipAlert;
         ctx.fillText("OIT PINNED — GC stalled", tp[0], tp[1] - 13 * cam.zoom);
       }
@@ -426,14 +446,16 @@ var Render = (function () {
     var l = FB.byId.lock;
     var lt = proj(cam, l.x + l.w / 2, l.y + l.d / 2, l.h + 0.3);
     ctx.save();
-    var ang = time * 2.2;
-    ctx.strokeStyle = "rgba(255,107,107," + (0.35 + 0.3 * Math.sin(time * 4)) + ")";
-    ctx.lineWidth = 2 * cam.zoom;
-    ctx.beginPath();
-    ctx.moveTo(lt[0], lt[1]);
-    ctx.lineTo(lt[0] + Math.cos(ang) * 30 * cam.zoom,
-               lt[1] + Math.sin(ang) * 14 * cam.zoom);
-    ctx.stroke();
+    if (!calm) {
+      var ang = time * 2.2;
+      ctx.strokeStyle = "rgba(255,107,107," + (0.35 + 0.3 * Math.sin(time * 4)) + ")";
+      ctx.lineWidth = 2 * cam.zoom;
+      ctx.beginPath();
+      ctx.moveTo(lt[0], lt[1]);
+      ctx.lineTo(lt[0] + Math.cos(ang) * 30 * cam.zoom,
+                 lt[1] + Math.sin(ang) * 14 * cam.zoom);
+      ctx.stroke();
+    }
     ctx.fillStyle = "#ff6b6b";
     ctx.shadowColor = "#ff6b6b";
     ctx.shadowBlur = 12 * cam.zoom;
@@ -487,6 +509,7 @@ var Render = (function () {
   return {
     draw: draw, pick: pick, proj: proj,
     setTheme: setTheme,
+    isCalm: function () { return calm; },
     TW: TW, TH: TH, TZ: TZ
   };
 })();

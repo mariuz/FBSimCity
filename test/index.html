@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FBSimCity tests</title>
+<style>
+  body {
+    background: #0b0e1a; color: #dce4ff;
+    font: 13px/1.6 "Segoe UI", system-ui, sans-serif;
+    padding: 24px; max-width: 900px; margin: 0 auto;
+  }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .lead { color: #9aa7d4; margin-bottom: 18px; font-size: 12.5px; }
+  #summary { font-size: 15px; font-weight: 600; margin-bottom: 14px; }
+  .ok { color: #69db7c; }
+  .bad { color: #ff8787; }
+  ul { list-style: none; }
+  li { padding: 3px 0 3px 22px; position: relative; border-bottom: 1px solid rgba(120,140,210,0.12); }
+  li::before { position: absolute; left: 0; }
+  li.p::before { content: "PASS"; color: #69db7c; font-size: 9px; font-weight: 700; top: 6px; }
+  li.f::before { content: "FAIL"; color: #ff8787; font-size: 9px; font-weight: 700; top: 6px; }
+  li.f { color: #ffc9c9; }
+  .detail { display: block; color: #8b97c4; font-size: 11.5px; }
+  /* hidden host for the app's DOM, so tests can assert on real controls */
+  #host { position: absolute; left: -10000px; width: 1200px; height: 800px; }
+</style>
+</head>
+<body>
+<h1>FBSimCity tests</h1>
+<p class="lead">Runs the real simulation and asserts against the real DOM and
+the real docs. Most of these exist to catch drift: the README and
+docs/KNOBS.md make claims, and this is what stops them going quietly stale.</p>
+<div id="summary">Running…</div>
+<ul id="list"></ul>
+
+<div id="host"></div>
+
+<script src="../js/data.js"></script>
+<script src="../js/sim.js"></script>
+<script src="../js/render.js"></script>
+<script src="tests.js"></script>
+<script>
+// Load the app's markup into a hidden host so control assertions run against
+// the same HTML the city ships, rather than a copy that can drift.
+fetch("../index.html?t=" + Date.now(), { cache: "no-store" })
+  .then(function (r) { return r.text(); })
+  .then(function (html) {
+    var body = html.split("<body>")[1].split("</body>")[0]
+      .replace(/<script[\s\S]*?<\/script>/g, "");
+    document.getElementById("host").innerHTML = body;
+    return window.FBRunTests();
+  })
+  .then(function (res) {
+    var sum = document.getElementById("summary");
+    sum.textContent = res.passed + " / " + res.total + " passed" +
+      (res.failed ? "  —  " + res.failed + " FAILED" : "  —  all green");
+    sum.className = res.failed ? "bad" : "ok";
+    document.title = (res.failed ? "FAIL " : "PASS ") +
+      res.passed + "/" + res.total + " — FBSimCity tests";
+    var ul = document.getElementById("list");
+    ul.innerHTML = res.results.map(function (r) {
+      return "<li class='" + (r.pass ? "p" : "f") + "'>" + r.name +
+        (r.detail ? "<span class='detail'>" + r.detail + "</span>" : "") +
+        "</li>";
+    }).join("");
+  })
+  .catch(function (e) {
+    document.getElementById("summary").textContent = "Test harness error: " + e;
+    document.getElementById("summary").className = "bad";
+  });
+</script>
+</body>
+</html>

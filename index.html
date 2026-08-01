@@ -18,6 +18,7 @@
     <button id="btn-tour" class="primary">Guided tour</button>
     <button id="btn-trace">Trace a query</button>
     <button id="btn-anatomy">Page anatomy</button>
+    <button id="btn-decide">Decisions</button>
     <a class="ghlink" href="lifecycle.html" title="Accessible text walk of the whole pipeline">Lifecycle</a>
     <button id="btn-pause">⏸ Pause</button>
     <button id="btn-speed">1×</button>
@@ -115,8 +116,17 @@
   <span class="stat">rollbacks <b id="st-rb"></b></span>
   <span class="stat">backup <b id="st-backup"></b></span>
   <span class="stat">delta <b id="st-delta"></b></span>
-  <span class="stat version">v0.4.0</span>
+  <span class="stat">model clock <b id="st-clock"></b></span>
+  <span class="stat version">v0.5.0</span>
 </footer>
+
+<div id="decide-dock" class="hidden">
+  <div class="tour-head">
+    <h3 id="decide-title">Operator decisions</h3>
+    <button id="decide-close" aria-label="Close">×</button>
+  </div>
+  <div id="decide-body"></div>
+</div>
 
 <div id="whereami" class="hidden" aria-live="polite"></div>
 

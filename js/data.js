@@ -277,6 +277,62 @@ var FB = (function () {
     ["gbak", "nbackup"]
   ];
 
+  /* Operator decisions: situations where Firebird hands you a genuinely hard
+   * call, both options cost something, and the verdict is measured from what
+   * actually happened in the model rather than asserted. */
+  var challenges = [
+    {
+      id: "sweepblock",
+      title: "Sweep is blocked",
+      situation: "An attachment has been sitting in a transaction for a long " +
+        "time without committing. It pins the OIT, so garbage collection " +
+        "cannot touch anything newer, and record versions are piling up on " +
+        "every table. The application team says the session 'might still be " +
+        "doing something'.",
+      options: [
+        { id: "kill", label: "Terminate the attachment",
+          detail: "DELETE FROM MON$ATTACHMENTS — the OIT advances immediately " +
+            "and garbage collection resumes. Whatever that transaction had " +
+            "done is rolled back." },
+        { id: "wait", label: "Wait for it to commit",
+          detail: "Nothing is lost, but nothing is collected either. The " +
+            "versions keep accumulating for as long as it sits there." }
+      ]
+    },
+    {
+      id: "gbakwindow",
+      title: "The backup is holding the OIT",
+      situation: "The nightly gbak started, and the workload did not go home " +
+        "with the day shift. gbak's snapshot pins the OIT for as long as it " +
+        "runs, so garbage collection is stalled and versions are climbing — " +
+        "but the backup is the reason you can sleep at night.",
+      options: [
+        { id: "finish", label: "Let the backup finish",
+          detail: "You get tonight's backup. Versions accumulate until it " +
+            "completes and GC catches up afterwards." },
+        { id: "cancel", label: "Cancel gbak",
+          detail: "The OIT is released now and GC resumes immediately — but " +
+            "there is no backup tonight." }
+      ]
+    },
+    {
+      id: "deltagrowing",
+      title: "The delta file is growing",
+      situation: "Someone locked the database with nbackup -L and never " +
+        "unlocked it. The main file is frozen and every page write is landing " +
+        "in the difference file, which has been growing all afternoon. Peak " +
+        "traffic is still an hour from over.",
+      options: [
+        { id: "unlock", label: "Unlock and merge now",
+          detail: "The delta merges back into the database file. That is real " +
+            "I/O, and it lands during peak — but the growth stops." },
+        { id: "wait", label: "Wait for the quiet window",
+          detail: "Avoids merge I/O now. The delta keeps growing, and it is " +
+            "the free space on that volume you are betting." }
+      ]
+    }
+  ];
+
   var tour = [
     {
       focus: "harbor", zoom: 1.25, title: "Welcome to FBSimCity",
@@ -358,8 +414,9 @@ var FB = (function () {
   ];
 
   return {
-    VERSION: "0.4.0",
+    VERSION: "0.5.0",
     buildings: buildings,
+    challenges: challenges,
     byId: byId,
     stations: stations,
     districts: districts,

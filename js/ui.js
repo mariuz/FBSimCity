@@ -212,6 +212,12 @@ var UI = (function () {
     applyTheme(saved === "day" ? "day" : "dark");
 
     // overlays
+    $("btn-decide").addEventListener("click", function () { openDecisions(); });
+    $("decide-close").addEventListener("click", function () {
+      Sim.endChallenge(simRef);
+      $("decide-dock").classList.add("hidden");
+    });
+
     $("btn-help").addEventListener("click", function () { toggleOverlay("help-overlay"); });
     $("help-close").addEventListener("click", function () { toggleOverlay("help-overlay", false); });
     $("btn-anatomy").addEventListener("click", function () { toggleOverlay("anatomy-overlay"); });
@@ -354,6 +360,90 @@ var UI = (function () {
     els.traceText.textContent = text;
   }
 
+  // ---- operator decisions ----------------------------------------------
+  //
+  // Non-modal: the city keeps running behind the dock, because the whole
+  // point is that the situation is getting worse while you decide.
+
+  function openDecisions() {
+    // the dock and the info panel share the right-hand corner, so they take
+    // turns; the decision itself is kept in the model, not in the DOM, so
+    // reopening returns to wherever you were
+    els.info.classList.add("hidden");
+    infoSelectedId = null;
+    var dock = $("decide-dock");
+    dock.classList.remove("hidden");
+    renderDecisions();
+  }
+
+  function renderDecisions() {
+    var body = $("decide-body"), s = simRef;
+    var html = "";
+
+    if (s.verdict) {
+      var vdef = challengeById(s.verdict.id);
+      var chosen = null;
+      vdef.options.forEach(function (o) {
+        if (o.id === s.verdict.choice) chosen = o;
+      });
+      html += "<p class='decide-chose'>You chose: <b>" + chosen.label + "</b></p>";
+      html += "<div class='verdict'>";
+      s.verdict.lines.forEach(function (l) { html += "<p>" + l + "</p>"; });
+      html += "</div>";
+      html += "<div class='panel-actions'><button class='act' data-back='1'>" +
+        "Back to the list</button></div>";
+    } else if (s.challenge) {
+      var def = challengeById(s.challenge.id);
+      html += "<h4>" + def.title + "</h4>";
+      html += "<p>" + def.situation + "</p>";
+      html += "<p class='fine decide-live'>The city is still running while " +
+        "you decide.</p>";
+      html += "<div class='decide-options'>";
+      def.options.forEach(function (o) {
+        html += "<button class='decide-opt' data-choice='" + o.id + "'>" +
+          "<b>" + o.label + "</b><span>" + o.detail + "</span></button>";
+      });
+      html += "</div>";
+    } else {
+      html += "<p class='fine'>Three situations where Firebird hands you a " +
+        "genuinely hard call. Both answers cost something, and the verdict " +
+        "is measured from what actually happens in the model.</p>";
+      html += "<div class='decide-options'>";
+      FB.challenges.forEach(function (c) {
+        html += "<button class='decide-opt' data-start='" + c.id + "'>" +
+          "<b>" + c.title + "</b></button>";
+      });
+      html += "</div>";
+    }
+    body.innerHTML = html;
+
+    body.querySelectorAll("[data-start]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        Sim.startChallenge(simRef, b.getAttribute("data-start"));
+        renderDecisions();
+      });
+    });
+    body.querySelectorAll("[data-choice]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        Sim.answerChallenge(simRef, b.getAttribute("data-choice"));
+        renderDecisions();
+      });
+    });
+    var back = body.querySelector("[data-back]");
+    if (back) {
+      back.addEventListener("click", function () {
+        Sim.endChallenge(simRef);
+        renderDecisions();
+      });
+    }
+  }
+
+  function challengeById(id) {
+    var found = null;
+    FB.challenges.forEach(function (c) { if (c.id === id) found = c; });
+    return found;
+  }
+
   // ---- info panel ------------------------------------------------------
 
   var infoSelectedId = null;
@@ -361,6 +451,7 @@ var UI = (function () {
   function showBuilding(id) {
     var b = FB.byId[id];
     if (!b) return;
+    $("decide-dock").classList.add("hidden");
     infoSelectedId = id;
     els.infoTitle.textContent = b.name;
     els.infoCode.textContent = b.code;
@@ -480,6 +571,7 @@ var UI = (function () {
   }
 
   function showAbout() {
+    $("decide-dock").classList.add("hidden");
     infoSelectedId = null;
     els.infoTitle.textContent = "FBSimCity";
     els.infoCode.textContent = "";
@@ -631,6 +723,13 @@ var UI = (function () {
     $("st-delta").textContent = bk.deltaPages;
     cls($("st-delta"), bk.deltaPages > 250 ? "bad" : bk.deltaPages > 0 ? "warn" : "");
 
+    // Model time, not wall time: the city runs on its own clock, which warp
+    // and the speed control move faster than yours.
+    var t = Math.floor(s.time);
+    var mm = Math.floor(t / 60), ss = t % 60;
+    $("st-clock").textContent = mm + ":" + (ss < 10 ? "0" : "") + ss +
+      (s.speed !== 1 ? " @" + s.speed + "×" : "") + (s.paused ? " ⏸" : "");
+
     spark("sp-qps", hist.qps, "#4dabf7");
     spark("sp-hit", hist.hit, "#69db7c", 1);
     spark("sp-vers", hist.vers, "#ff8787");
@@ -645,6 +744,16 @@ var UI = (function () {
       renderChain(s);
     }
     refreshActionLabels();
+    if (!$("decide-dock").classList.contains("hidden") &&
+        (s.challenge || s.verdict)) {
+      // keep the situation's live numbers honest while the dock is open
+      var live = $("decide-body").querySelector(".decide-live");
+      if (live) {
+        live.textContent = "Right now: " + s.totalVersions +
+          " stale versions, OIT " + s.oit +
+          (s.backup.deltaPages ? ", delta " + s.backup.deltaPages + " pages" : "");
+      }
+    }
 
     updateTrace();
   }
