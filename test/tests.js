@@ -105,6 +105,16 @@
     t.ok("100% writes creates versions", rw.totalVersions > 0);
   }
 
+  // ---- 2b. the version is stated in two places; they must agree --------
+
+  function testVersion(indexHtml) {
+    var m = indexHtml.match(/class="stat version">v([\d.]+)</);
+    t.ok("index.html carries a version badge", !!m);
+    if (m) {
+      t.eq("FB.VERSION matches the version badge", FB.VERSION, m[1]);
+    }
+  }
+
   // ---- 3. documented scenarios and deep-link params --------------------
 
   function testScenariosAndLinks(readme) {
@@ -362,10 +372,12 @@
       fetchText("../js/sim.js"),
       fetchText("../docs/KNOBS.md"),
       fetchText("../README.md"),
-      fetchText("../lifecycle.html")
+      fetchText("../lifecycle.html"),
+      fetchText("../index.html")
     ]).then(function (files) {
       testPurity(files[0]);
       testKnobs(files[1]);
+      testVersion(files[4]);
       testScenariosAndLinks(files[2]);
       testBehaviour();
       testDecisions();
