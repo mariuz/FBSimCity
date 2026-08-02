@@ -19,6 +19,7 @@
     <button id="btn-trace" title="Follow one query through every station">Trace</button>
     <button id="btn-anatomy" title="Anatomy of a Firebird data page">Anatomy</button>
     <button id="btn-decide" title="Operator decisions with real consequences">Decisions</button>
+    <button id="btn-latency" title="Where a query's time actually goes">Latency</button>
     <a class="ghlink" href="lifecycle.html" title="Accessible text walk of the whole pipeline">Lifecycle</a>
     <button id="btn-pause">⏸ Pause</button>
     <button id="btn-speed">1×</button>
@@ -64,6 +65,11 @@
   <div class="ctl">
     <label for="ctl-cache">Page cache <output id="ctl-cache-val"></output></label>
     <input type="range" id="ctl-cache" min="16" max="128" step="16" value="64">
+  </div>
+
+  <div class="ctl">
+    <label for="ctl-tempcache">Sort memory <output id="ctl-tempcache-val"></output></label>
+    <input type="range" id="ctl-tempcache" min="8" max="120" step="8" value="40">
   </div>
 
   <div class="ctl">
@@ -138,7 +144,7 @@
   <span class="stat">delta <b id="st-delta"></b></span>
   <span class="stat">repl lag <b id="st-lag"></b> <span class="dim">(<b id="st-segs"></b> seg)</span></span>
   <span class="stat">model clock <b id="st-clock"></b></span>
-  <span class="stat version">v0.6.1</span>
+  <span class="stat version">v0.7.0</span>
 </footer>
 
 <div id="decide-dock" class="hidden">
@@ -147,6 +153,14 @@
     <button id="decide-close" aria-label="Close">×</button>
   </div>
   <div id="decide-body"></div>
+</div>
+
+<div id="latency-dock" class="hidden">
+  <div class="tour-head">
+    <h3>Where the time goes</h3>
+    <button id="latency-close" aria-label="Close">×</button>
+  </div>
+  <div id="latency-body"></div>
 </div>
 
 <div id="whereami" class="hidden" aria-live="polite"></div>

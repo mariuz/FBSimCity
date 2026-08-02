@@ -4,7 +4,7 @@
 
 🔗 **Live: [mariuz.github.io/FBSimCity](https://mariuz.github.io/FBSimCity/)**
 
-![FBSimCity — a replica applying too slowly, so sealed journal segments are stacking up in the replication yard while the rest of the city keeps working](docs/screenshot.png)
+![FBSimCity under cache thrash, with the latency panel showing where a query's time actually goes — parse and compile 48%, page cache 21%, disk reads 19%](docs/screenshot.png)
 
 FBSimCity is an interactive isometric city where every building is a real
 Firebird subsystem and every glowing particle is a query making its commute:
@@ -70,6 +70,16 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
   **synchronous** and break it again: replication *stops itself*
   (`disable_on_error`) while commits carry on untouched — no hang, no error
   to the client, and a replica quietly rotting until someone notices.
+- **Open the latency panel** (`Latency`) to see where a query's time actually
+  goes — parse and compile, page cache, disk reads, sorting, lock waits,
+  writing a version, commit, and replication send. Every bucket is charged
+  from real elapsed time in the model and the parts are asserted to sum to
+  the whole. Transit between districts is *excluded* and labelled: a real
+  query does not walk anywhere, and a profile where the animation dominates
+  would look authoritative while meaning nothing.
+- **Squeeze sort memory.** `TempCacheLimit` decides which sorts fit in
+  memory; the rest spill to temporary files, and you can watch the sorting
+  bar grow as you turn it down.
 - **Make an operator decision.** Four situations where Firebird hands you a
   genuinely hard call — an idle transaction blocking sweep, a backup holding
   the OIT through peak, a forgotten nbackup lock growing its delta, a dead
@@ -103,11 +113,24 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
 - **Deep-link a state**: `?scenario=stuckoit&theme=day&warp=50&panel=mvcc&lock=1`
   applies a scenario (`steady`, `thrash`, `stuckoit`, `locks`, `rush`,
   `sweepstorm`, `nightlygbak`, `nbackup`, `replicalag`, `syncstall`), picks a
-  theme, fast-forwards the
+  theme, opens a dock (`dock=latency` or `dock=decisions`), fast-forwards the
   simulation, opens a building's info panel and can leave the database
   locked — handy for sharing a reproducible view (the README screenshot is
   exactly
-  [this link](https://mariuz.github.io/FBSimCity/?scenario=replicalag&warp=55&panel=journal)).
+  [this link](https://mariuz.github.io/FBSimCity/?scenario=thrash&warp=90&dock=latency)).
+
+## Found something wrong?
+
+Every building panel and the latency view carry a **report** link that opens
+a pre-filled issue. No analytics or tracking is attached to those links, or
+to anything else — the city makes no network calls at all.
+
+Corrections get acted on rather than filed. The whole replication model was
+rewritten in v0.6.1 after Dmitry Sibiryakov pointed out on firebird-general
+that a synchronous replica which dies does not hang commits — it stops
+replicating and lets them through. He was right, the source agreed with him,
+and [docs/KNOBS.md](docs/KNOBS.md) records the error rather than quietly
+erasing it.
 
 ## What it is (and isn't)
 

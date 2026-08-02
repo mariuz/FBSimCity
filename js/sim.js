@@ -51,6 +51,15 @@ var Sim = (function () {
       // cache bookkeeping
       evictions: 0, dirtyEvictions: 0, pageWrites: 0,
 
+      // sort memory (Firebird's TempCacheLimit): sorts larger than this
+      // spill to temporary files on disk
+      tempCacheLimit: 40,
+      sorts: 0, sortSpills: 0,
+
+      // where completed queries actually spent their time, sampled over the
+      // last LAT_SAMPLE trips rather than asserted
+      lat: { samples: [], totals: null },
+
       // backup & recovery (gbak logical dump, nbackup physical levels)
       backup: {
         gbakActive: false, gbakProgress: 0, gbakTxn: null, gbakRuns: 0,
@@ -73,7 +82,6 @@ var Sim = (function () {
         segments: [],         // sealed segments awaiting apply, in order
         segNo: 1,
         generated: 0, applied: 0,
-        syncWaits: 0,         // commits that paid synchronous send latency
         disabled: false,      // disable_on_error tore replication down
         stops: 0,             // STOP_ERROR events
         flash: 0, applyAcc: 0
@@ -260,7 +268,8 @@ var Sim = (function () {
       path.push(wp("cache", 0.08, "wpage"));
       path.push(wp("tra", 0.12, "commit"));
     } else if (Math.random() < 0.45) {
-      path.push(wp(Math.random() < 0.5 ? "btr" : "sort", 0.15));
+      var useIndex = Math.random() < 0.5;
+      path.push(useIndex ? wp("btr", 0.15) : wp("sort", 0.15, "sort"));
     }
     path.push(wp("exec", 0.08));
     path.push(wp("yvalve", 0.06, "result"));
@@ -275,7 +284,9 @@ var Sim = (function () {
       txn: null,
       traced: !!traced,
       waiting: false,
-      dead: false
+      dead: false,
+      lat: newLat(),
+      latBucket: "travel"
     };
     if (isUpdate) {
       q.txn = s.next++;
@@ -301,6 +312,13 @@ var Sim = (function () {
       s.traceStage = step.at;
       s.traceNote = "";
     }
+    // charge this station's dwell to the right bucket
+    q.latBucket = ({
+      lexer: "compile", parser: "compile", blrgen: "compile", cmp: "compile",
+      cache: "cacheHit", pio: "diskRead", sort: "sortSpill",
+      lock: "lockWait", mvcc: "version", tra: "commit", journal: "repl"
+    })[step.at] || "travel";
+
     switch (step.act) {
       case "blr":
         q.phase = "blr";
@@ -318,6 +336,22 @@ var Sim = (function () {
       case "wpage": {
         var wHit = cacheAccess(s, true);
         if (q.traced) s.traceNote = wHit ? "hit" : "miss";
+        break;
+      }
+      case "sort": {
+        // Firebird sorts in memory up to TempCacheLimit and spills the rest
+        // to temporary files. A spill is disk I/O the query pays for.
+        s.sorts++;
+        var need = 8 + Math.floor(Math.random() * 90);
+        if (need > s.tempCacheLimit) {
+          s.sortSpills++;
+          q.dwell += 0.35 + (need - s.tempCacheLimit) / 120;
+          s.diskFlash = 1;
+          s.diskPos = Math.random();
+          if (q.traced) s.traceNote = "spill";
+        } else if (q.traced) {
+          s.traceNote = "inmemory";
+        }
         break;
       }
       case "lock":
@@ -361,6 +395,7 @@ var Sim = (function () {
       case "done":
         q.dead = true;
         s.done++;
+        recordLatency(s, q);
         break;
     }
     q.waiting = q.waiting && step.act === "lock";
@@ -371,8 +406,10 @@ var Sim = (function () {
   function moveParticles(s, dt) {
     for (var i = 0; i < s.particles.length; i++) {
       var q = s.particles[i];
+      chargeLatency(q, dt);
       if (q.dwell > 0) { q.dwell -= dt; q.waiting = q.waiting && q.dwell > 0; continue; }
       q.waiting = false;
+      q.latBucket = "travel";   // moving between stations costs travel time
       var step = q.path[q.idx];
       var dx = step.x - q.x, dy = step.y - q.y;
       var dist = Math.sqrt(dx * dx + dy * dy);
@@ -480,6 +517,73 @@ var Sim = (function () {
   // replica in commit order.
 
   var SEGMENT_SIZE = 20;      // changes per journal segment (scaled)
+  var LAT_SAMPLE = 256;       // completed trips kept for the latency profile
+
+  /* The buckets a query's time can land in. Everything a particle does is
+   * charged to exactly one of these, so the parts sum to the whole and the
+   * profile cannot quietly lose time. */
+  var LAT_KEYS = ["compile", "cacheHit", "diskRead", "sortSpill", "lockWait",
+                  "version", "commit", "repl", "travel"];
+
+  /* "travel" is the time a particle spends moving between districts. That is
+   * a property of drawing a city, not of running a database — a real query
+   * does not walk anywhere. It is accounted for so the books balance, but it
+   * is kept out of the reported decomposition, because a profile in which
+   * 84% is the animation would be an authoritative-looking lie. */
+  var LAT_WORK_KEYS = LAT_KEYS.filter(function (k) { return k !== "travel"; });
+
+  function newLat() {
+    var l = {};
+    for (var i = 0; i < LAT_KEYS.length; i++) l[LAT_KEYS[i]] = 0;
+    return l;
+  }
+
+  /* Charge elapsed time to whichever bucket the query is currently in. */
+  function chargeLatency(q, dt) {
+    if (!q.lat) return;
+    q.lat[q.latBucket || "travel"] += dt;
+  }
+
+  function recordLatency(s, q) {
+    if (!q.lat) return;
+    var total = 0;
+    for (var i = 0; i < LAT_KEYS.length; i++) total += q.lat[LAT_KEYS[i]];
+    q.lat.total = total;
+    s.lat.samples.push(q.lat);
+    if (s.lat.samples.length > LAT_SAMPLE) s.lat.samples.shift();
+    s.lat.totals = null;   // invalidate the cached aggregate
+  }
+
+  /* Aggregate the sample into mean seconds per bucket, plus p50/p95 totals.
+   * Computed on demand so the simulation loop stays cheap. */
+  function latencyProfile(s) {
+    if (s.lat.totals) return s.lat.totals;
+    var n = s.lat.samples.length;
+    if (!n) return null;
+    var sums = newLat(), i, k;
+    for (i = 0; i < n; i++) {
+      for (k = 0; k < LAT_KEYS.length; k++) {
+        sums[LAT_KEYS[k]] += s.lat.samples[i][LAT_KEYS[k]];
+      }
+    }
+    var mean = {}, grand = 0, workTotal = 0;
+    for (k = 0; k < LAT_KEYS.length; k++) {
+      mean[LAT_KEYS[k]] = sums[LAT_KEYS[k]] / n;
+      grand += mean[LAT_KEYS[k]];
+      if (LAT_KEYS[k] !== "travel") workTotal += mean[LAT_KEYS[k]];
+    }
+    var totals = s.lat.samples.map(function (x) { return x.total; })
+      .sort(function (a, b) { return a - b; });
+    s.lat.totals = {
+      n: n, mean: mean,
+      grand: grand,           // every bucket, including transit
+      workTotal: workTotal,   // the part with a real-world counterpart
+      p50: totals[Math.floor(n * 0.5)],
+      p95: totals[Math.min(n - 1, Math.floor(n * 0.95))],
+      keys: LAT_KEYS, workKeys: LAT_WORK_KEYS
+    };
+    return s.lat.totals;
+  }
 
   /* A transaction committed.
    *
@@ -520,9 +624,11 @@ var Sim = (function () {
 
     if (r.mode === "sync") {
       // sent straight to the replica; no journal segment is written
-      r.syncWaits++;
       r.applied++;                       // the replica has it as we commit
-      if (q) q.dwell += r.health === "slow" ? 0.9 : 0.25;
+      if (q) {
+        q.dwell += r.health === "slow" ? 0.9 : 0.25;
+        q.latBucket = "repl";            // this wait belongs to replication
+      }
     } else {
       r.pending++;
       if (r.pending >= SEGMENT_SIZE) {
@@ -983,6 +1089,9 @@ var Sim = (function () {
     setReplMode: setReplMode,
     setReplHealth: setReplHealth,
     replLag: replLag,
+    latencyProfile: latencyProfile,
+    LAT_KEYS: LAT_KEYS,
+    LAT_WORK_KEYS: LAT_WORK_KEYS,
     SEGMENT_SIZE: SEGMENT_SIZE,
     TABLE_COUNT: TABLE_COUNT,
     PAGE_SPACE: PAGE_SPACE

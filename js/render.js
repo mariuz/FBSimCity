@@ -351,9 +351,31 @@ var Render = (function () {
     }
   }
 
-  /* Sealed journal segments waiting to ship, stacked in the yard. */
+  /* Sealed journal segments waiting to ship, stacked in the yard — plus the
+   * open segment filling up in front of them, so the approach to a seal is
+   * continuously visible rather than a sudden pop. */
   function drawJournal(ctx, cam, s) {
     var b = FB.byId.journal, r = s.repl;
+
+    if (r.mode === "async" && !r.disabled) {
+      var frac = r.pending / Sim.SEGMENT_SIZE;
+      var ox = b.x + 0.4, oy = b.y + b.d - 0.9;
+      // outline of the segment being written
+      var o0 = proj(cam, ox, oy, 0), o1 = proj(cam, ox + 0.62, oy, 0),
+          o2 = proj(cam, ox + 0.62, oy + 0.55, 0), o3 = proj(cam, ox, oy + 0.55, 0);
+      poly(ctx, [o0, o1, o2, o3], "rgba(132,94,247,0.16)",
+        "rgba(160,130,255,0.55)", 1);
+      if (frac > 0) {
+        drawBox(ctx, cam, ox, oy, 0.62, 0.55, 0.05 + frac * 0.5, "#b197fc", 0);
+      }
+      if (cam.zoom > 0.7) {
+        var lp = proj(cam, ox + 0.85, oy + 0.1, 0);
+        ctx.fillStyle = T.labelDim;
+        ctx.font = (9 * Math.min(cam.zoom, 1.2)) + "px 'Segoe UI', sans-serif";
+        ctx.fillText(r.pending + "/" + Sim.SEGMENT_SIZE, lp[0], lp[1]);
+      }
+    }
+
     var n = Math.min(r.segments.length, 24);
     for (var i = 0; i < n; i++) {
       var col = i % 6, row = Math.floor(i / 6);

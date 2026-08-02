@@ -20,6 +20,7 @@ Three honesty levels:
 | Query rate | 0–20 q/s | Spawn rate of query particles | **scaled** — a real server does thousands/s; this is what fits on screen |
 | Write mix | 0–100% | Share of queries that take a lock, write a version and commit | **real** — the read/write split drives everything downstream |
 | Page cache | 16–128 buffers | Size of the LRU buffer cache | **scaled** — Firebird's default is 2048 pages; the hot set here is 40 pages, so 64 covers it and 16 thrashes |
+| Sort memory | 8–120 units | Firebird's `TempCacheLimit`: sorts that fit run in memory, larger ones spill to temporary files | **real** mechanism, **scaled** units — the spill is genuine disk I/O the query pays for, but the sizes are arbitrary |
 | Sweep interval | 10–60 s | Seconds between automatic sweeps | **modeled** — real sweep is triggered by the OIT/OAT gap crossing the sweep interval (default 20 000 transactions), not by a wall clock |
 | Automatic sweep | on/off | Enables the interval sweep | **real** — corresponds to setting the sweep interval to 0 |
 | Long-running transaction | on/off | Starts a transaction that never commits, pinning the OIT | **real** — this is exactly how a forgotten transaction stalls GC |
@@ -98,6 +99,7 @@ hit ratio, delta size) are measured from the run, not written in advance.
 | backup | Current backup state, or the completed level chain | **real** |
 | delta | Pages sitting in the difference file | **real** counting, **scaled** capacity |
 | model clock | Elapsed time inside the simulation, with the speed multiplier and pause state | **real** — it is the model's own clock, which warp and the speed control move faster than yours |
+| Latency profile | Mean time per bucket over the last 256 completed trips, plus p50/p95 | **real** accounting — every bucket is charged from elapsed model time and the parts are asserted to sum to the whole, so the profile cannot quietly lose time. The *magnitudes* are scaled like everything else |
 
 ## Deliberate simplifications
 
@@ -150,5 +152,22 @@ production, so the OIT pin looks survivable when it may not be.
 
 `test/` asserts that every control listed above exists in the UI and is
 documented here, that every scenario in the picker appears in the README,
-and that each knob produces a measurable change in the model. Adding a
-control without documenting it fails the suite.
+that each knob produces a measurable change in the model, and that every
+deep link printed in the docs uses parameters and values the app actually
+handles. Adding a control without documenting it fails the suite.
+
+The suite also tests itself: a set of deliberate-breakage checks confirm
+that the drift tests *can* go red — that breaking a documented knob name,
+putting DOM access in the simulation layer, dropping a latency bucket or
+colliding two semantic colours would each be caught. A green suite is only
+worth something if it is capable of turning red.
+
+## Found something wrong?
+
+Every building panel and the latency view carry a **report** link that opens
+a pre-filled issue. No analytics or tracking is attached to those links, or
+to anything else here.
+
+Corrections are acted on, not filed: the entire replication model was
+rewritten in v0.6.1 after Dmitry Sibiryakov pointed out on firebird-general
+that the synchronous-failure behaviour was backwards.

@@ -188,6 +188,8 @@ var UI = (function () {
       function (v) { return v + "% writes"; });
     bindRange("ctl-cache", function (v) { Sim.setCacheSize(sim, +v); },
       function (v) { return v + " pages"; });
+    bindRange("ctl-tempcache", function (v) { sim.tempCacheLimit = +v; },
+      function (v) { return v + " units"; });
     bindRange("ctl-sweepint", function (v) { sim.sweepInterval = +v; },
       function (v) { return "every " + v + "s"; });
 
@@ -248,6 +250,13 @@ var UI = (function () {
 
     // overlays
     $("btn-decide").addEventListener("click", function () { openDecisions(); });
+    $("btn-latency").addEventListener("click", function () {
+      $("latency-dock").classList.toggle("hidden");
+      renderLatency();
+    });
+    $("latency-close").addEventListener("click", function () {
+      $("latency-dock").classList.add("hidden");
+    });
     $("decide-close").addEventListener("click", function () {
       Sim.endChallenge(simRef);
       $("decide-dock").classList.add("hidden");
@@ -310,6 +319,14 @@ var UI = (function () {
       if (params.get("lock") === "1") Sim.toggleLock(simRef);
       var pn = params.get("panel");
       if (pn && FB.byId[pn]) showBuilding(pn);
+      // ?dock=latency|decisions — open a side dock directly
+      var dk = params.get("dock");
+      if (dk === "latency") {
+        $("latency-dock").classList.remove("hidden");
+        renderLatency();
+      } else if (dk === "decisions") {
+        openDecisions();
+      }
     } catch (e) { }
   }
 
@@ -479,6 +496,82 @@ var UI = (function () {
     return found;
   }
 
+  // ---- latency decomposition -------------------------------------------
+  //
+  // Measured from completed trips, not asserted. Every bucket is charged
+  // from real elapsed time in the model, so the parts sum to the whole.
+
+  var LAT_LABELS = {
+    compile: "Parse &amp; compile (DSQL, CMP)",
+    cacheHit: "Page cache",
+    diskRead: "Disk reads (cache misses)",
+    sortSpill: "Sorting (incl. spills)",
+    lockWait: "Lock waits",
+    version: "Writing a record version",
+    commit: "Commit (TIP + forced write)",
+    repl: "Replication send (sync only)",
+    travel: "Everything else in flight"
+  };
+
+  function renderLatency() {
+    var dock = $("latency-dock");
+    if (dock.classList.contains("hidden")) return;
+    var p = Sim.latencyProfile(simRef);
+    var body = $("latency-body");
+    if (!p) {
+      body.innerHTML = "<p class='fine'>No completed queries yet — let the " +
+        "city run for a moment.</p>";
+      return;
+    }
+    var html = "<p class='fine'>Mean work per query over the last <b>" + p.n +
+      "</b> completed trips — <b>" + p.workTotal.toFixed(2) + "s</b> of " +
+      "engine work each.</p><div class='latbars'>";
+    // biggest contributor first — that is the one worth arguing with
+    var keys = p.workKeys.slice().sort(function (a, b) {
+      return p.mean[b] - p.mean[a];
+    });
+    keys.forEach(function (k) {
+      var v = p.mean[k];
+      var pct = p.workTotal > 0 ? (v / p.workTotal) * 100 : 0;
+      if (v < 0.001) return;
+      html += "<div class='latrow'>" +
+        "<span class='latname'>" + LAT_LABELS[k] + "</span>" +
+        "<span class='latbar'><i style='width:" + pct.toFixed(1) + "%'></i></span>" +
+        "<span class='latval'>" + v.toFixed(2) + "s <b>" +
+        pct.toFixed(0) + "%</b></span></div>";
+    });
+    html += "</div>";
+    html += "<p class='fine'>Shrink the page cache and watch disk reads take " +
+      "over. Drop sort memory and the sort bar grows. Switch replication to " +
+      "synchronous and a new bar appears that was not there before.</p>";
+    html += "<p class='fine excluded'><b>Excluded:</b> " +
+      p.mean.travel.toFixed(2) + "s per query is spent moving between " +
+      "districts. That is a property of drawing a city, not of running a " +
+      "database — a real query does not walk anywhere — so it is kept out " +
+      "of the percentages above rather than allowed to dominate them.</p>";
+    html += correctionLink("the latency model");
+    body.innerHTML = html;
+  }
+
+  // ---- correction links ------------------------------------------------
+  //
+  // Every announcement says corrections are welcome; this makes acting on
+  // that a single click rather than a research project. No tracking of any
+  // kind is attached to these links.
+
+  function correctionLink(what) {
+    var title = encodeURIComponent("Model correction: " + what);
+    var body = encodeURIComponent(
+      "**What FBSimCity shows**\n\n(what the model does today)\n\n" +
+      "**What Firebird actually does**\n\n(the real behaviour)\n\n" +
+      "**Source**\n\n(a file in FirebirdSQL/firebird, a doc, or your own " +
+      "experience — all welcome)\n\n---\n" +
+      "Subject: " + what + "\nVersion: v" + FB.VERSION + "\n");
+    return "<p class='fine correction'><a href='https://github.com/mariuz/" +
+      "FBSimCity/issues/new?title=" + title + "&body=" + body +
+      "' target='_blank' rel='noopener'>Something wrong here? Report it &rarr;</a></p>";
+  }
+
   // ---- info panel ------------------------------------------------------
 
   var infoSelectedId = null;
@@ -493,7 +586,8 @@ var UI = (function () {
     els.infoCode.style.display = "";
     els.infoBody.innerHTML = "<p>" + b.desc + "</p>" +
       (id === "mvcc" ? "<div id='chain-live'></div>" : "") +
-      actionsFor(id);
+      actionsFor(id) +
+      correctionLink(b.name + " (" + b.code + ")");
     if (id === "mvcc") renderChain(simRef);
     wireActions();
     els.info.classList.remove("hidden");
@@ -650,6 +744,9 @@ var UI = (function () {
       "Inspired by <a href='https://github.com/NikolayS/PGSimCity' " +
       "target='_blank' rel='noopener'>PGSimCity</a>. This is a scaled model " +
       "for intuition, not an emulator.</p>" +
+      "<p class='fine'>Found something it gets wrong? Every panel has a " +
+      "report link, and corrections are taken seriously — the replication " +
+      "model was rewritten after one.</p>" +
       "<p class='fine'>FBSimCity is an independent educational project, not " +
       "affiliated with or endorsed by the Firebird Project. Firebird&reg; is " +
       "a registered trademark of the Firebird Foundation Incorporated.</p>";
@@ -809,6 +906,7 @@ var UI = (function () {
       renderChain(s);
     }
     refreshActionLabels();
+    renderLatency();
     if (!$("decide-dock").classList.contains("hidden") &&
         (s.challenge || s.verdict)) {
       // keep the situation's live numbers honest while the dock is open

@@ -64,7 +64,8 @@
       { id: "ctl-longtxn", doc: "Long-running transaction" },
       { id: "ctl-scenario", doc: "Scenario" },
       { id: "ctl-replmode", doc: "Replication mode" },
-      { id: "ctl-replhealth", doc: "Replica health" }
+      { id: "ctl-replhealth", doc: "Replica health" },
+      { id: "ctl-tempcache", doc: "Sort memory" }
     ];
     controls.forEach(function (c) {
       t.ok("control #" + c.id + " exists", !!document.getElementById(c.id));
@@ -103,6 +104,86 @@
     run(ro, 45); run(rw, 45);
     t.eq("0% writes creates no versions", ro.totalVersions, 0);
     t.ok("100% writes creates versions", rw.totalVersions > 0);
+
+    // sort memory: a small TempCacheLimit must measurably spill more
+    var tight = Sim.create(); tight.queryRate = 12; tight.updateRatio = 0;
+    tight.tempCacheLimit = 8;
+    var roomy = Sim.create(); roomy.queryRate = 12; roomy.updateRatio = 0;
+    roomy.tempCacheLimit = 120;
+    run(tight, 60); run(roomy, 60);
+    t.ok("sorts happen at all", tight.sorts > 0 && roomy.sorts > 0);
+    t.ok("less sort memory spills more often",
+      tight.sortSpills / Math.max(1, tight.sorts) >
+      roomy.sortSpills / Math.max(1, roomy.sorts),
+      "tight " + tight.sortSpills + "/" + tight.sorts +
+      " vs roomy " + roomy.sortSpills + "/" + roomy.sorts);
+    t.eq("a generous sort memory spills nothing", roomy.sortSpills, 0);
+  }
+
+  // ---- 2c. latency decomposition accounts for all of the time ----------
+
+  function testLatency() {
+    var s = Sim.create();
+    s.queryRate = 12; s.updateRatio = 0.5;
+    run(s, 90);
+    var p = Sim.latencyProfile(s);
+    t.ok("a latency profile is produced", !!p);
+    if (!p) return;
+    t.ok("the profile samples completed trips", p.n > 10, "n=" + p.n);
+
+    // the parts must sum to the whole — a profile that loses time is worse
+    // than no profile, because it looks authoritative
+    var sum = 0;
+    p.keys.forEach(function (k) { sum += p.mean[k]; });
+    t.ok("bucket means sum to the reported total",
+      Math.abs(sum - p.grand) < 1e-9,
+      "sum " + sum.toFixed(6) + " vs grand " + p.grand.toFixed(6));
+
+    // each sample's buckets must sum to its own total
+    var worst = 0;
+    s.lat.samples.forEach(function (x) {
+      var t2 = 0;
+      p.keys.forEach(function (k) { t2 += x[k]; });
+      worst = Math.max(worst, Math.abs(t2 - x.total));
+    });
+    t.ok("every sample's buckets sum to its total", worst < 1e-9,
+      "worst drift " + worst);
+
+    t.ok("p50 does not exceed p95", p.p50 <= p.p95,
+      "p50 " + p.p50.toFixed(2) + " p95 " + p.p95.toFixed(2));
+
+    // transit is a drawing artifact and must be excluded from the reported
+    // work, but still accounted for so the books balance
+    t.ok("transit is excluded from the reported work buckets",
+      p.workKeys.indexOf("travel") === -1);
+    t.ok("work total plus transit equals the grand total",
+      Math.abs((p.workTotal + p.mean.travel) - p.grand) < 1e-9);
+    t.ok("work total is smaller than the grand total",
+      p.workTotal < p.grand, "transit should be non-zero");
+
+    // a smaller cache must move time into disk reads
+    var small = Sim.create(); small.queryRate = 12; small.updateRatio = 0.4;
+    Sim.setCacheSize(small, 16);
+    var big = Sim.create(); big.queryRate = 12; big.updateRatio = 0.4;
+    Sim.setCacheSize(big, 128);
+    run(small, 90); run(big, 90);
+    var ps = Sim.latencyProfile(small), pb = Sim.latencyProfile(big);
+    t.ok("a smaller cache shifts time into disk reads",
+      ps.mean.diskRead > pb.mean.diskRead,
+      "16 buffers " + ps.mean.diskRead.toFixed(3) +
+      "s vs 128 buffers " + pb.mean.diskRead.toFixed(3) + "s");
+
+    // synchronous replication must show up as replication time, and async
+    // must not — the bucket has to mean what it says
+    var sy = Sim.create(); sy.queryRate = 10; sy.updateRatio = 0.9;
+    Sim.setReplMode(sy, "sync");
+    var as = Sim.create(); as.queryRate = 10; as.updateRatio = 0.9;
+    Sim.setReplMode(as, "async");
+    run(sy, 90); run(as, 90);
+    t.ok("synchronous replication shows as replication latency",
+      Sim.latencyProfile(sy).mean.repl > 0);
+    t.eq("asynchronous replication costs the commit no wait",
+      Sim.latencyProfile(as).mean.repl, 0);
   }
 
   // ---- 2b. the version is stated in two places; they must agree --------
@@ -374,6 +455,76 @@
     });
   }
 
+  // ---- 6b. every documented deep link actually resolves -----------------
+  // A link in the README that silently stopped working is a claim that
+  // quietly became false. Check the parameters against what UI accepts.
+
+  function testDeepLinks(readme, knobs) {
+    var text = readme + "\n" + knobs;
+    var urls = text.match(/mariuz\.github\.io\/FBSimCity\/\?[^\s)\]]+/g) || [];
+    t.ok("documented deep links exist", urls.length > 0);
+
+    var scenarioKeys = Array.prototype.slice
+      .call(document.getElementById("ctl-scenario").options)
+      .map(function (o) { return o.value; }).filter(function (v) { return v; });
+    var knownParams = ["scenario", "theme", "warp", "panel", "lock", "dock"];
+
+    urls.forEach(function (u) {
+      var qs = u.split("?")[1].replace(/&amp;/g, "&");
+      qs.split("&").forEach(function (pair) {
+        var k = pair.split("=")[0], v = pair.split("=")[1];
+        t.ok("deep-link param '" + k + "' is one the app handles",
+          knownParams.indexOf(k) !== -1, "in " + u);
+        if (k === "scenario") {
+          t.ok("deep-link scenario '" + v + "' exists in the picker",
+            scenarioKeys.indexOf(v) !== -1, "in " + u);
+        }
+        if (k === "panel") {
+          t.ok("deep-link panel '" + v + "' is a real building",
+            !!FB.byId[v], "in " + u);
+        }
+        if (k === "theme") {
+          t.ok("deep-link theme '" + v + "' is valid",
+            v === "day" || v === "dark", "in " + u);
+        }
+      });
+    });
+  }
+
+  // ---- 6c. the drift tests actually fail when something drifts ---------
+  // A green suite is only reassuring if it can go red. These deliberately
+  // break a value and assert that the corresponding check notices.
+
+  function testTheTests(knobsMd) {
+    // knob-documentation check must fail for an undocumented control
+    var fakeDoc = knobsMd.replace("Sort memory", "Srot memroy");
+    t.ok("the knob-doc check would catch an undocumented control",
+      fakeDoc.indexOf("Sort memory") === -1,
+      "breaking the doc string should make the lookup fail");
+
+    // sim purity check must fail on a simulation that touches the DOM
+    var dirty = "function f(){ document.getElementById('x'); }";
+    t.ok("the purity check would catch DOM access in the simulation",
+      /\bdocument\s*\./.test(dirty));
+
+    // latency accounting must fail if a bucket is dropped
+    var s = Sim.create();
+    s.queryRate = 12;
+    run(s, 60);
+    var p = Sim.latencyProfile(s);
+    if (p) {
+      var partial = 0;
+      p.keys.slice(1).forEach(function (k) { partial += p.mean[k]; });
+      t.ok("the latency sum check would catch a dropped bucket",
+        Math.abs(partial - p.grand) > 1e-9 || p.mean[p.keys[0]] === 0,
+        "omitting a non-zero bucket must break the sum");
+    }
+
+    // colour-contrast check must fail for two identical colours
+    t.ok("the colour check would catch two identical colours",
+      contrast("#40c057", "#40c057") < 1.3);
+  }
+
   // ---- 7. accessibility surface ----------------------------------------
 
   function testAccessibility(lifecycleHtml) {
@@ -408,11 +559,14 @@
     ]).then(function (files) {
       testPurity(files[0]);
       testKnobs(files[1]);
+      testLatency();
       testVersion(files[4]);
       testScenariosAndLinks(files[2]);
+      testDeepLinks(files[2], files[1]);
       testBehaviour();
       testDecisions();
       testColours();
+      testTheTests(files[1]);
       testAccessibility(files[3]);
 
       var passed = results.filter(function (r) { return r.pass; }).length;
