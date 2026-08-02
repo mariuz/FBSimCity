@@ -34,15 +34,28 @@ replica in commit order.
 
 | Knob | Effect | Honesty |
 |---|---|---|
-| Replication mode | `off`, `asynchronous`, or `synchronous` | **real** — async lets the replica trail and never blocks a commit; sync makes the commit wait for the replica |
+| Replication mode | `off`, `asynchronous`, or `synchronous` | **real** — async journals to segments and the replica trails; sync sends down a live connection and writes no journal |
 | Replica health | `healthy`, `slow to apply`, `unreachable` | **modeled** — a single dial standing in for network, disk and load on the replica |
 | repl lag | Changes committed but not yet applied | **real** arithmetic (generated − applied), **scaled** magnitudes |
-| segments | Sealed journal segments waiting to ship | **real** structure — 20 changes per segment here, configurable in reality |
+| segments | Sealed journal segments waiting to ship | **real** structure — 20 changes per segment here, configurable in reality; async only |
 
-The behaviour that matters most: **a synchronous replica that dies hangs
-commits.** It does not quietly fall back to asynchronous. Silently
-downgrading would mean claiming a durability guarantee the configuration no
-longer has, so the model refuses to do it.
+The behaviour that matters most: **a failing replica does not block a
+commit.** `disable_on_error` (default `true`) tears replication down —
+`STOP_ERROR` is logged, the replicating flags are cleared and the replicator
+disposed — and the commit succeeds normally. On the commit path Firebird
+calls `checkStatus()` with `canThrow = false`, so it cannot throw even when
+`report_errors` is on (and `report_errors` defaults to `false`).
+
+Synchronous replication here is **not** two-phase commit and offers no
+durability guarantee, so there is none to lose when a replica dies. The
+practical consequence is worse than a hang would be: replication stops,
+commits carry on, nobody is told, and the replica silently rots until
+somebody notices and turns it back on.
+
+*Verified against `src/jrd/replication/Publisher.cpp` and `Config.cpp` on
+FirebirdSQL/firebird master. An earlier version of this model claimed the
+opposite — that commits hang — which was wrong; thanks to Dmitry Sibiryakov
+for the correction.*
 
 ## Backup yard
 

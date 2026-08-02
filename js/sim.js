@@ -73,8 +73,9 @@ var Sim = (function () {
         segments: [],         // sealed segments awaiting apply, in order
         segNo: 1,
         generated: 0, applied: 0,
-        syncWaits: 0,         // commits that waited on a synchronous replica
-        stalled: false,       // synchronous replica unreachable: commits hang
+        syncWaits: 0,         // commits that paid synchronous send latency
+        disabled: false,      // disable_on_error tore replication down
+        stops: 0,             // STOP_ERROR events
         flash: 0, applyAcc: 0
       },
 
@@ -480,36 +481,69 @@ var Sim = (function () {
 
   var SEGMENT_SIZE = 20;      // changes per journal segment (scaled)
 
-  /* A transaction committed. Journal its change, and in synchronous mode
-   * make the commit wait for the replica to have it. */
+  /* A transaction committed.
+   *
+   * Asynchronous replication journals the change into a segment. Synchronous
+   * replication has no journal — the change goes straight down a connection
+   * to the replica, which costs the commit some latency.
+   *
+   * When a replica errors, Firebird does NOT block the commit. checkStatus()
+   * in Publisher.cpp is called with canThrow=false on the commit path, and
+   * disable_on_error (default true) tears replication down: TRA_replicating
+   * and ATT_replicating are cleared, the replicator is disposed, and
+   * STOP_ERROR is logged. The commit then succeeds normally.
+   *
+   * So a synchronous replica that dies does not hang anything — replication
+   * disables itself and the primary carries on without it. There is no
+   * durability guarantee being protected here, because Firebird's
+   * synchronous replication is not two-phase commit and never promised one.
+   *
+   * Verified against FirebirdSQL/firebird master, src/jrd/replication/
+   * Publisher.cpp and Config.cpp. Corrected after Dmitry Sibiryakov pointed
+   * out that the earlier model had this backwards.
+   */
   function replicateCommit(s, q) {
     var r = s.repl;
     if (r.mode === "off") return;
 
-    r.pending++;
-    r.generated++;
-    r.flash = 1;
-    if (r.pending >= SEGMENT_SIZE) {
-      r.segments.push({ n: r.segNo++, changes: r.pending });
-      r.pending = 0;
+    if (r.health === "down") {
+      if (r.mode === "sync") {
+        // disable_on_error: replication stops, the commit does not
+        selfDisable(s, "the synchronous replica is unreachable");
+        return;
+      }
+      // asynchronous: the primary keeps journalling regardless
     }
 
+    r.generated++;
+    r.flash = 1;
+
     if (r.mode === "sync") {
-      if (r.health === "down") {
-        // A synchronous replica that is gone does not silently downgrade to
-        // asynchronous — the commit hangs. Pretending otherwise would be
-        // claiming a durability guarantee the configuration does not have.
-        r.stalled = true;
-        r.syncWaits++;
-        if (q) q.dwell += 6;
-      } else {
-        r.stalled = false;
-        r.syncWaits++;
-        if (q) q.dwell += r.health === "slow" ? 0.9 : 0.25;
-      }
+      // sent straight to the replica; no journal segment is written
+      r.syncWaits++;
+      r.applied++;                       // the replica has it as we commit
+      if (q) q.dwell += r.health === "slow" ? 0.9 : 0.25;
     } else {
-      r.stalled = false;
+      r.pending++;
+      if (r.pending >= SEGMENT_SIZE) {
+        r.segments.push({ n: r.segNo++, changes: r.pending });
+        r.pending = 0;
+      }
     }
+  }
+
+  /* disable_on_error — the engine's own words are "STOP_ERROR". Replication
+   * is torn down; everything else carries on as if it had never been on. */
+  function selfDisable(s, why) {
+    var r = s.repl;
+    if (r.disabled) return;
+    r.disabled = true;
+    r.mode = "off";
+    r.pending = 0;
+    r.segments = [];
+    r.stops++;
+    say(s, "Replication STOPPED — " + why + ". disable_on_error tore it " +
+      "down; commits are unaffected and the replica is now out of sync.");
   }
 
   function tickReplication(s, dt) {
@@ -540,14 +574,13 @@ var Sim = (function () {
     var r = s.repl;
     if (r.mode === mode) return;
     r.mode = mode;
+    r.disabled = false;   // re-enabling is an operator action, as in reality
     if (mode === "off") {
       r.pending = 0;
       r.segments = [];
-      r.stalled = false;
       say(s, "Replication switched off. Journalling stopped and the backlog " +
         "was discarded.");
     } else {
-      r.stalled = false;
       say(s, "Replication set to " + mode + ".");
     }
   }
@@ -558,14 +591,16 @@ var Sim = (function () {
     r.health = health;
     if (health === "down") {
       say(s, r.mode === "sync"
-        ? "Replica unreachable — synchronous commits are now hanging."
+        ? "Replica unreachable — the next commit will stop replication."
         : "Replica unreachable. Segments will accumulate until it returns.");
     } else if (health === "slow") {
       say(s, "Replica is applying slowly; lag will build.");
     } else {
-      say(s, "Replica healthy again — catching up from segment " +
-        (r.segments.length ? r.segments[0].n : r.segNo) + ".");
-      r.stalled = false;
+      say(s, r.disabled
+        ? "Replica reachable again — but replication is still stopped. It " +
+          "has to be switched back on deliberately."
+        : "Replica healthy again — catching up from segment " +
+          (r.segments.length ? r.segments[0].n : r.segNo) + ".");
     }
   }
 

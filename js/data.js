@@ -184,15 +184,18 @@ var FB = (function () {
       id: "replicator", code: "REPL", name: "Replicator",
       x: 9, y: 31.5, w: 3, d: 3, h: 3.2, color: "#5f3dc4",
       short: "Ships sealed segments to the replica.",
-      desc: "The replicator hands sealed journal segments to the replica. In " +
-        "<strong>asynchronous</strong> mode it works at its own pace and the " +
-        "replica trails behind — commits on the primary never wait. In " +
-        "<strong>synchronous</strong> mode the commit itself does not return " +
-        "until the replica has the change, so the primary runs at the speed " +
-        "of the slowest replica. If a synchronous replica dies, commits hang " +
-        "rather than quietly losing durability — that is the honest " +
-        "behaviour, and the reason synchronous replication is a decision " +
-        "rather than a default."
+      desc: "In <strong>asynchronous</strong> mode the replicator hands sealed " +
+        "journal segments to the replica at its own pace, and the replica " +
+        "trails behind. In <strong>synchronous</strong> mode there is no " +
+        "journal at all — the change goes straight down a connection to the " +
+        "replica, which costs the commit some latency.<br><br>" +
+        "When a replica errors, the commit is <em>not</em> blocked. " +
+        "<code>disable_on_error</code> (on by default) tears replication " +
+        "down — the engine logs STOP_ERROR, clears the replicating flags and " +
+        "disposes the replicator — and the commit succeeds normally. " +
+        "Synchronous replication here is not two-phase commit and offers no " +
+        "durability guarantee, so there is none to lose: replication simply " +
+        "stops, and someone has to notice and turn it back on."
     },
     {
       id: "replica", code: "REPL", name: "Replica Database",
@@ -463,12 +466,13 @@ var FB = (function () {
     {
       focus: "journal", zoom: 1.1, title: "REPL — replication without a log",
       text: "Firebird has no write-ahead log to ship, so its replication is " +
-        "logical: committed changes are journalled into segments, sealed, " +
-        "and replayed on the replica in commit order. Asynchronous means the " +
-        "replica trails and commits never wait. Synchronous means the commit " +
-        "waits for the replica — and if that replica dies, commits hang " +
-        "rather than silently giving up durability. Break the replica from " +
-        "the control room and watch the segments stack up."
+        "logical: committed changes are journalled into segments and " +
+        "replayed on the replica in commit order. Asynchronous means the " +
+        "replica trails and the journal keeps growing while it is away. " +
+        "Synchronous sends changes down a live connection instead — and if " +
+        "that replica dies, replication does not hang the database, it " +
+        "stops itself. Break the replica from the control room and watch " +
+        "which of the two happens."
     },
     {
       focus: "gbak", zoom: 1.15, title: "Backup yard — gbak and nbackup",
@@ -490,7 +494,7 @@ var FB = (function () {
   ];
 
   return {
-    VERSION: "0.6.0",
+    VERSION: "0.6.1",
     buildings: buildings,
     challenges: challenges,
     byId: byId,

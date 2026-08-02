@@ -118,7 +118,7 @@ var UI = (function () {
         setSelect("ctl-replhealth", "down");
       },
       focus: "replicator", zoom: 1.2,
-      msg: "Synchronous replication with an unreachable replica: commits hang rather than quietly losing durability."
+      msg: "Synchronous replica unreachable: disable_on_error stops replication. Commits carry on — nobody is blocked, and nobody is told."
     },
     nbackup: {
       label: "nbackup with delta",
@@ -780,9 +780,10 @@ var UI = (function () {
 
     var rp = s.repl, lag = Sim.replLag(s);
     var lagEl = $("st-lag");
-    lagEl.textContent = rp.mode === "off" ? "off" : (rp.stalled ? "HUNG" : lag);
-    cls(lagEl, rp.mode === "off" ? "" :
-      rp.stalled || lag > 400 ? "bad" : lag > 80 ? "warn" : "good");
+    lagEl.textContent = rp.disabled ? "STOPPED"
+      : rp.mode === "off" ? "off" : lag;
+    cls(lagEl, rp.disabled ? "bad" : rp.mode === "off" ? "" :
+      lag > 400 ? "bad" : lag > 80 ? "warn" : "good");
     $("st-segs").textContent = rp.segments.length;
     cls($("st-segs"), rp.segments.length > 16 ? "bad" :
       rp.segments.length > 4 ? "warn" : "");

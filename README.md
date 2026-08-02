@@ -67,8 +67,9 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
   WAL to ship, so committed changes are journalled into segments and replayed
   on the replica in commit order. Set the replica slow and watch lag build;
   set it unreachable and watch segments stack up in the yard. Then switch to
-  **synchronous** and break it again: commits hang, because a synchronous
-  replica that dies does not quietly downgrade to asynchronous.
+  **synchronous** and break it again: replication *stops itself*
+  (`disable_on_error`) while commits carry on untouched — no hang, no error
+  to the client, and a replica quietly rotting until someone notices.
 - **Make an operator decision.** Four situations where Firebird hands you a
   genuinely hard call — an idle transaction blocking sweep, a backup holding
   the OIT through peak, a forgotten nbackup lock growing its delta, a dead

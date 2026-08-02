@@ -235,13 +235,44 @@
     t.ok("catch-up resumes from the oldest segment, in order",
       !rd.repl.segments.length || rd.repl.segments[0].n >= firstSeg);
 
-    // synchronous replication with a dead replica must hang, not downgrade
+    // A dead synchronous replica must NOT block commits. Firebird calls
+    // checkStatus() with canThrow=false on the commit path and, with
+    // disable_on_error (default true), tears replication down instead.
+    // Verified against src/jrd/replication/Publisher.cpp on master.
     var rc = Sim.create();
     rc.queryRate = 8; rc.updateRatio = 0.8;
     Sim.setReplMode(rc, "sync"); Sim.setReplHealth(rc, "down");
+    var commitsBefore = rc.next;
     run(rc, 60);
-    t.ok("a dead synchronous replica hangs commits", rc.repl.stalled,
-      "silently continuing would be claiming durability it does not have");
+    t.ok("a dead synchronous replica stops replication", rc.repl.disabled,
+      "disable_on_error should have torn replication down");
+    t.eq("replication mode is off after a stop", rc.repl.mode, "off");
+    t.ok("commits keep flowing while replication is stopped",
+      rc.next > commitsBefore + 5,
+      "the commit path must not block on a failed replica");
+    t.ok("exactly one STOP_ERROR is logged, not one per commit",
+      rc.repl.stops === 1, "stops=" + rc.repl.stops);
+
+    // an async replica going away must NOT stop replication — the primary
+    // just keeps journalling, which is the disk-fill hazard
+    var rasync = Sim.create();
+    rasync.queryRate = 10; rasync.updateRatio = 0.8;
+    Sim.setReplMode(rasync, "async"); Sim.setReplHealth(rasync, "down");
+    run(rasync, 40);
+    t.ok("an async replica going away does not stop replication",
+      !rasync.repl.disabled);
+    t.ok("async keeps journalling while the replica is away",
+      rasync.repl.segments.length > 0);
+
+    // synchronous replication writes no journal segments
+    var rsync = Sim.create();
+    rsync.queryRate = 10; rsync.updateRatio = 0.9;
+    Sim.setReplMode(rsync, "sync");
+    run(rsync, 40);
+    t.eq("synchronous replication writes no journal segments",
+      rsync.repl.segments.length, 0);
+    t.ok("a healthy synchronous replica stays in step",
+      Sim.replLag(rsync) === 0, "lag " + Sim.replLag(rsync));
 
     // switching replication off discards the backlog
     var ro2 = Sim.create();

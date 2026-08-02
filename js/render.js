@@ -320,7 +320,7 @@ var Render = (function () {
         c0 = proj(cam, b.x + b.w, b.y + b.d, 0), d0 = proj(cam, b.x, b.y + b.d, 0),
         a1 = proj(cam, b.x, b.y, -depth), b1 = proj(cam, b.x + b.w, b.y, -depth),
         c1 = proj(cam, b.x + b.w, b.y + b.d, -depth), d1 = proj(cam, b.x, b.y + b.d, -depth);
-    var dead = r.mode === "off" || r.health === "down";
+    var dead = r.mode === "off" || r.disabled || r.health === "down";
     poly(ctx, [a0, b0, b1, a1], dead ? T.replDeadX : T.replWallX);
     poly(ctx, [a0, d0, d1, a1], dead ? T.replDeadY : T.replWallY);
     poly(ctx, [a1, b1, c1, d1], T.replFloor, T.replStroke, 1);
@@ -342,7 +342,8 @@ var Render = (function () {
       ctx.fillStyle = dead ? "#ff8787" : T.replLabel;
       ctx.font = (10 * Math.min(cam.zoom, 1.3)) + "px 'Segoe UI', sans-serif";
       var lp = proj(cam, b.x + 0.4, b.y + b.d - 0.3, -depth);
-      var label = r.mode === "off" ? "replication off"
+      var label = r.disabled ? "REPLICATION STOPPED (disable_on_error)"
+        : r.mode === "off" ? "replication off"
         : r.health === "down" ? "REPLICA UNREACHABLE"
         : r.health === "slow" ? "applying slowly — lag " + Sim.replLag(s)
         : "in step (lag " + Sim.replLag(s) + ")";
@@ -399,7 +400,7 @@ var Render = (function () {
       if (b.id === "journal" && s.repl.flash > 0) {
         glow = Math.max(glow, s.repl.flash);
       }
-      if (b.id === "replicator" && s.repl.stalled) {
+      if (b.id === "replicator" && s.repl.disabled) {
         glow = Math.max(glow, pulse(time, 6));
       }
       list.push({
