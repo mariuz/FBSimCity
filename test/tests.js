@@ -525,6 +525,137 @@
       contrast("#40c057", "#40c057") < 1.3);
   }
 
+  // ---- 6d. fuzz the knobs, then soak ------------------------------------
+  // Sweep combinations of every control and assert the model never produces
+  // a NaN, a negative count, an unbounded queue or a stall. Individually
+  // sane knobs can still combine into nonsense.
+
+  function finiteState(s) {
+    var bad = [];
+    var nums = {
+      totalVersions: s.totalVersions, next: s.next, oat: s.oat, oit: s.oit,
+      hitRatio: s.hitRatio, evictions: s.evictions,
+      dirtyEvictions: s.dirtyEvictions, pageWrites: s.pageWrites,
+      lockWaits: s.lockWaits, rollbacks: s.rollbacks,
+      deltaPages: s.backup.deltaPages, generated: s.repl.generated,
+      applied: s.repl.applied, sorts: s.sorts, sortSpills: s.sortSpills,
+      time: s.time
+    };
+    Object.keys(nums).forEach(function (k) {
+      var v = nums[k];
+      if (typeof v !== "number" || !isFinite(v)) bad.push(k + "=" + v);
+      else if (v < 0) bad.push(k + " negative (" + v + ")");
+    });
+    if (s.repl.applied > s.repl.generated) {
+      bad.push("applied " + s.repl.applied + " > generated " + s.repl.generated);
+    }
+    if (s.oit > s.next || s.oat > s.next) bad.push("markers past Next");
+    if (s.particles.length > 400) bad.push("particles unbounded: " + s.particles.length);
+    if (s.lat.samples.length > 256) bad.push("latency sample unbounded");
+    s.tables.forEach(function (t, i) {
+      if (t.chain.length !== t.versions) bad.push("table " + i + " chain desync");
+    });
+    return bad;
+  }
+
+  function testFuzz() {
+    var long = /[?&]soak=1/.test(location.search);
+    var secs = long ? 25 : 8;
+    var rates = [0, 6, 14, 20];
+    var writes = [0, 0.5, 1];
+    var caches = [16, 64, 128];
+    var modes = ["off", "async", "sync"];
+    var healths = ["healthy", "slow", "down"];
+    var cases = 0, failures = [];
+
+    rates.forEach(function (rate) {
+      writes.forEach(function (wr) {
+        caches.forEach(function (cache) {
+          modes.forEach(function (mode) {
+            healths.forEach(function (health) {
+              cases++;
+              var s = Sim.create();
+              s.queryRate = rate;
+              s.updateRatio = wr;
+              Sim.setCacheSize(s, cache);
+              Sim.setReplMode(s, mode);
+              Sim.setReplHealth(s, health);
+              // stir in the other controls too
+              s.tempCacheLimit = (cases % 2) ? 8 : 120;
+              s.sweepEnabled = (cases % 3) !== 0;
+              if (cases % 5 === 0) Sim.setLongTxn(s, true);
+              if (cases % 7 === 0) Sim.toggleLock(s);
+              if (cases % 11 === 0) Sim.startGbak(s);
+              run(s, secs);
+              var bad = finiteState(s);
+              if (bad.length) {
+                failures.push("rate=" + rate + " wr=" + wr + " cache=" + cache +
+                  " " + mode + "/" + health + ": " + bad.join(", "));
+              }
+            });
+          });
+        });
+      });
+    });
+
+    var expected = rates.length * writes.length * caches.length *
+                   modes.length * healths.length;
+    t.eq("fuzz covered every knob combination", cases, expected);
+    t.ok("no knob combination produces invalid state", failures.length === 0,
+      failures.slice(0, 3).join(" | "));
+  }
+
+  /* The soak is the expensive one. It runs at its full length only when
+   * asked for with ?soak=1, because a suite that locks the browser for
+   * minutes is a suite people quietly stop running. The short version still
+   * exercises every code path; the long one is for catching drift that only
+   * shows up over time. */
+  function testSoak() {
+    var long = /[?&]soak=1/.test(location.search);
+    var half = long ? 200 : 45;
+
+    var s = Sim.create();
+    s.queryRate = 20; s.updateRatio = 0.9;
+    Sim.setCacheSize(s, 16);
+    Sim.setReplMode(s, "async");
+    Sim.setReplHealth(s, "slow");
+    s.tempCacheLimit = 8;
+    run(s, half);
+    var mid = s.done + s.next;
+    var badMid = finiteState(s);
+    run(s, half);
+    var bad = finiteState(s);
+    t.ok("soak length is recorded", true, "");
+    results[results.length - 1].name =
+      "soak ran " + (half * 2) + "s" + (long ? " (long)" : " (short — ?soak=1 for 400s)");
+    t.ok("soak keeps state valid", bad.length === 0, bad.join(", "));
+    t.ok("the city is still working at the end of the soak",
+      (s.done + s.next) > mid, "no progress in the second half");
+    t.ok("particles stay bounded under sustained load",
+      s.particles.length <= 300, "particles=" + s.particles.length);
+    t.ok("journal segments do not grow without limit in a slow replica",
+      s.repl.segments.length < 5000, "segments=" + s.repl.segments.length);
+    t.ok("soak produced no mid-run corruption", badMid.length === 0,
+      badMid.join(", "));
+  }
+
+  // ---- 6e. every building is documented --------------------------------
+
+  function testDocCoverage() {
+    FB.buildings.forEach(function (b) {
+      t.ok("building '" + b.id + "' has a name, code and short line",
+        !!b.name && !!b.code && !!b.short);
+      t.ok("building '" + b.id + "' has a real description",
+        !!b.desc && b.desc.length > 120,
+        "descriptions carry the teaching; a stub is a silent gap");
+    });
+    FB.challenges.forEach(function (c) {
+      t.ok("decision '" + c.id + "' has a situation and two detailed options",
+        !!c.situation && c.options.length === 2 &&
+        c.options.every(function (o) { return !!o.detail; }));
+    });
+  }
+
   // ---- 7. accessibility surface ----------------------------------------
 
   function testAccessibility(lifecycleHtml) {
@@ -536,6 +667,15 @@
       lifecycleHtml.indexOf('href="index.html"') !== -1);
     t.ok("reduced motion is honoured in CSS or renderer",
       typeof Render.isCalm === "function");
+
+    // the canvas cannot announce itself; keyboard selection must have a
+    // live region to speak through
+    t.ok("a live region exists for keyboard selection",
+      !!document.getElementById("a11y-live"));
+    t.ok("the live region is polite",
+      (document.getElementById("a11y-live") || {}).getAttribute &&
+      document.getElementById("a11y-live").getAttribute("aria-live") === "polite");
+    t.ok("UI exposes an announce hook", typeof UI.announce === "function");
   }
 
   // ---- runner ----------------------------------------------------------
@@ -565,8 +705,11 @@
       testDeepLinks(files[2], files[1]);
       testBehaviour();
       testDecisions();
+      testDocCoverage();
       testColours();
       testTheTests(files[1]);
+      testFuzz();
+      testSoak();
       testAccessibility(files[3]);
 
       var passed = results.filter(function (r) { return r.pass; }).length;

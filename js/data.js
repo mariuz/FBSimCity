@@ -494,7 +494,7 @@ var FB = (function () {
   ];
 
   return {
-    VERSION: "0.7.0",
+    VERSION: "0.8.0",
     buildings: buildings,
     challenges: challenges,
     byId: byId,

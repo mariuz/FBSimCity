@@ -108,6 +108,13 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
 - Prefer text? **[The life of a query](https://mariuz.github.io/FBSimCity/lifecycle.html)**
   is the same journey as an accessible, keyboard-navigable page — no canvas,
   works with a screen reader.
+- **Want the real thing?** [The real engine](https://mariuz.github.io/FBSimCity/engine.html)
+  points at [Electric Firebird](https://github.com/mariuz/electric-firebird),
+  which compiles Firebird's embedded engine to WebAssembly the way PGlite does
+  for PostgreSQL. Run actual SQL against an actual engine in your browser and
+  check the city's claims against it — the page lists a few worth settling.
+- **No mouse?** `Tab` and `Shift+Tab` step through every subsystem in pipeline
+  order, opening each panel and announcing it to a screen reader.
 - Switch to the **daylight theme** (`D`), pause the world (`space`), or run
   it at 4× speed. Press `?` for all shortcuts.
 - **Deep-link a state**: `?scenario=stuckoit&theme=day&warp=50&panel=mvcc&lock=1`
@@ -181,6 +188,7 @@ then open <http://localhost:8000/>.
 - `js/ui.js` — control room, stats bar, info panel, guided tour
 - `js/main.js` — camera, input, main loop
 - `lifecycle.html` — the accessible text walk of the pipeline
+- `engine.html` — the real engine: Electric Firebird, and claims to check
 - `docs/KNOBS.md` — knob audit: what every control really does
 - `test/` — the test suite (open `test/index.html`; no framework, no build)
 - `tools/screenshot.ps1` — regenerates `docs/screenshot.png` from a deep link

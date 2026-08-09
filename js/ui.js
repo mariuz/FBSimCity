@@ -747,6 +747,11 @@ var UI = (function () {
       "<p class='fine'>Found something it gets wrong? Every panel has a " +
       "report link, and corrections are taken seriously — the replication " +
       "model was rewritten after one.</p>" +
+      "<p class='fine'>Want the real thing? <a href='engine.html'>The real " +
+      "engine</a> runs actual Firebird, compiled to WebAssembly by " +
+      "<a href='https://github.com/mariuz/electric-firebird' target='_blank' " +
+      "rel='noopener'>Electric Firebird</a>, so you can check the model " +
+      "against the engine itself.</p>" +
       "<p class='fine'>FBSimCity is an independent educational project, not " +
       "affiliated with or endorsed by the Firebird Project. Firebird&reg; is " +
       "a registered trademark of the Firebird Foundation Incorporated.</p>";
@@ -921,10 +926,18 @@ var UI = (function () {
     updateTrace();
   }
 
+  /* Speak a change to assistive technology. The canvas cannot announce
+   * anything on its own, so keyboard selection routes through here. */
+  function announce(msg) {
+    var el = $("a11y-live");
+    if (el) el.textContent = msg;
+  }
+
   return {
     init: init,
     showBuilding: showBuilding,
     updateStats: updateStats,
-    handleKey: handleKey
+    handleKey: handleKey,
+    announce: announce
   };
 })();

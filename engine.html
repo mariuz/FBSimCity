@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The real engine — FBSimCity</title>
+<meta name="description" content="FBSimCity is a model. This is the actual Firebird engine compiled to WebAssembly, running in your browser via Electric Firebird — so you can check the model against the thing itself.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0b0e1a; color: #dce4ff;
+    font: 13.5px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+    padding: 28px 16px 60px;
+  }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1 {
+    font-size: 25px;
+    background: linear-gradient(90deg, #ffa94d, #ff6b6b, #c084fc);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    margin-bottom: 6px;
+  }
+  .lead { color: #9aa7d4; margin-bottom: 6px; max-width: 78ch; }
+  .backlink { display: inline-block; margin: 14px 0 22px; color: #74c0fc; }
+  h2 { font-size: 16px; color: #fff; margin: 26px 0 8px; }
+  p { max-width: 78ch; margin-bottom: 10px; color: #c3cdf1; }
+  a { color: #74c0fc; }
+
+  .contrast {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 18px 0 6px;
+  }
+  .card {
+    border: 1px solid rgba(120,140,210,0.3);
+    border-radius: 10px;
+    padding: 13px 16px;
+    background: rgba(16,20,40,0.7);
+  }
+  .card.model { border-left: 4px solid #4dabf7; }
+  .card.real { border-left: 4px solid #ffa94d; }
+  .card h3 { font-size: 13.5px; margin-bottom: 6px; color: #fff; }
+  .card p { font-size: 12.5px; margin-bottom: 0; color: #9aa7d4; }
+
+  .launch { margin: 20px 0 10px; }
+  .bigbtn {
+    display: inline-block;
+    padding: 13px 26px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #1a1205;
+    background: linear-gradient(90deg, #ffa94d, #ffc078);
+    border-radius: 9px;
+    text-decoration: none;
+  }
+  .bigbtn:hover { filter: brightness(1.08); }
+
+  table { border-collapse: collapse; width: 100%; margin: 10px 0 4px; font-size: 12.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid rgba(120,140,210,0.2); vertical-align: top; }
+  th { color: #8fa0d8; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+  code, pre {
+    font-family: Consolas, "SF Mono", monospace;
+    background: rgba(40,50,90,0.55);
+    border: 1px solid rgba(130,150,220,0.3);
+    border-radius: 5px;
+  }
+  code { padding: 1px 6px; font-size: 12px; color: #ffd43b; }
+  pre { padding: 10px 13px; margin: 8px 0; overflow-x: auto; }
+  pre code { background: none; border: 0; padding: 0; color: #c3cdf1; }
+  .fine { font-size: 12px; color: #8b97c4; }
+
+  @media (max-width: 800px) { .contrast { grid-template-columns: 1fr; } }
+  @media (prefers-color-scheme: light) {
+    body { background: #eef3fb; color: #1f2947; }
+    .card { background: rgba(252,253,255,0.9); border-color: rgba(90,110,180,0.35); }
+    .card h3 { color: #141c36; }
+    .card p, .lead, .fine { color: #51619b; }
+    p { color: #33406b; }
+    h2 { color: #141c36; }
+    a, .backlink { color: #1971c2; }
+    code { background: rgba(220,228,248,0.8); color: #8a5a00; border-color: rgba(90,110,180,0.35); }
+    pre code { color: #33406b; }
+    th { color: #51619b; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>The real engine</h1>
+  <p class="lead">FBSimCity is a model. It parses no SQL and runs no Firebird
+  code — that has been the honest caveat on every page of it. This page is
+  where you can go and check the model against the thing itself.</p>
+  <a class="backlink" href="index.html">← back to the city</a>
+
+  <div class="contrast">
+    <div class="card model">
+      <h3>The city — a model</h3>
+      <p>Scaled mechanics for intuition. Buffer counts in the dozens, version
+      chains capped at 26, gbak in twelve seconds. Nothing here executes SQL;
+      the particles are an animation over an arithmetic model of the engine's
+      behaviour.</p>
+    </div>
+    <div class="card real">
+      <h3>Below — the actual engine</h3>
+      <p><a href="https://github.com/mariuz/electric-firebird">Electric
+      Firebird</a> compiles Firebird's embedded engine to WebAssembly, the way
+      PGlite does for PostgreSQL. That is real <code>libfbembed</code>, running
+      locally in a Web Worker with IndexedDB for storage. No server, and
+      nothing you type is uploaded anywhere.</p>
+    </div>
+  </div>
+
+  <p class="launch">
+    <a class="bigbtn" href="https://mariuz.github.io/electric-firebird/"
+       target="_blank" rel="noopener">Open the real engine →</a>
+  </p>
+
+  <p class="fine">It opens in its own tab, and that is not laziness — it is
+  the interesting part. Firebird's engine uses threads, so the WebAssembly
+  build needs <code>SharedArrayBuffer</code>, which browsers only hand to a
+  <em>cross-origin isolated</em> page. GitHub Pages cannot send the
+  <code>COOP</code>/<code>COEP</code> headers that grant isolation, so the
+  demo installs a service worker to synthesise them for itself — a trick that
+  only works for a page at the top level. Embedded in a frame here, the
+  engine would load its interface and then refuse to start, which is a worse
+  answer than a link.</p>
+
+  <h2>Check the model against it</h2>
+  <p>The city makes claims. Here are some you can settle for yourself in that
+  console, against a real engine, in a few seconds each.</p>
+
+  <table>
+    <tr><th>What the city shows</th><th>Ask the real engine</th></tr>
+    <tr>
+      <td>The Transaction Hall stamps a new id per transaction, and the OIT
+      trails behind.</td>
+      <td><code>SELECT CURRENT_TRANSACTION FROM RDB$DATABASE;</code> — run it
+      twice and watch the number move.</td>
+    </tr>
+    <tr>
+      <td>The Metadata Library is just more tables inside the database file.</td>
+      <td><code>SELECT RDB$RELATION_NAME FROM RDB$RELATIONS;</code> — the
+      catalog is queryable like anything else.</td>
+    </tr>
+    <tr>
+      <td>An UPDATE writes a new record version rather than overwriting.</td>
+      <td>Update a row inside a transaction, and read it from a second
+      attachment before committing. The old value is still there.</td>
+    </tr>
+    <tr>
+      <td>Firebird has no write-ahead log; the database is one file.</td>
+      <td>There is no WAL directory to look for. Recovery is careful write
+      ordering, not log replay.</td>
+    </tr>
+  </table>
+
+  <h2>Where the model is knowingly wrong</h2>
+  <p>Everything the city simplifies is written down in the
+  <a href="https://github.com/mariuz/FBSimCity/blob/main/docs/KNOBS.md">knob
+  audit</a>, including the direction of each divergence — the places it is
+  <em>kinder</em> than Firebird and the places it is <em>harsher</em>. If the
+  real engine disagrees with the city about something that is not on that
+  list, that is a bug worth reporting:</p>
+  <p><a href="https://github.com/mariuz/FBSimCity/issues/new?title=Model%20correction%3A%20checked%20against%20the%20real%20engine">Report
+  a divergence →</a></p>
+  <p class="fine">This has happened. The whole replication model was rewritten
+  in v0.6.1 after a Firebird core developer pointed out that a synchronous
+  replica which dies does not hang commits — it stops replicating and lets
+  them through.</p>
+
+  <h2>Running it yourself</h2>
+  <p>Electric Firebird works in Node as well as the browser:</p>
+<pre><code>const db = new FirebirdBrowser('mydb', {
+  worker: new Worker('/firebird-engine-worker.js')
+});
+await db.exec('CREATE TABLE items (id INTEGER, name VARCHAR(100))');
+const rows = await db.query('SELECT * FROM items WHERE id = ?', [1]);</code></pre>
+  <p class="fine">Source and docs:
+  <a href="https://github.com/mariuz/electric-firebird">github.com/mariuz/electric-firebird</a>.
+  FBSimCity does not bundle the engine — this page embeds the published demo,
+  so the city itself stays a single static page that makes no network calls.</p>
+
+  <p class="fine" style="margin-top:26px">Part of
+  <a href="index.html">FBSimCity</a>. FBSimCity is an independent educational
+  project, not affiliated with or endorsed by the Firebird Project.
+  Firebird&reg; is a registered trademark of the Firebird Foundation
+  Incorporated.</p>
+</main>
+</body>
+</html>

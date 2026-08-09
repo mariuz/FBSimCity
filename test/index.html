@@ -36,10 +36,20 @@ docs/KNOBS.md make claims, and this is what stops them going quietly stale.</p>
 
 <div id="host"></div>
 
-<script src="../js/data.js"></script>
-<script src="../js/sim.js"></script>
-<script src="../js/render.js"></script>
-<script src="tests.js"></script>
+<script>
+// Load the app's sources with a cache-buster. A harness that silently tests
+// a stale copy reports green on code that no longer exists — which happened
+// often enough during development to be worth ten lines of prevention.
+// ui.js only defines the UI object; nothing runs until UI.init(), which the
+// harness never calls.
+(function () {
+  var v = Date.now();
+  ["../js/data.js", "../js/sim.js", "../js/render.js", "../js/ui.js",
+   "tests.js"].forEach(function (src) {
+    document.write('<script src="' + src + '?v=' + v + '"><\/script>');
+  });
+})();
+</script>
 <script>
 // Load the app's markup into a hidden host so control assertions run against
 // the same HTML the city ships, rather than a copy that can drift.

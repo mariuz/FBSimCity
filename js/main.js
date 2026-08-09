@@ -159,10 +159,46 @@
     }
   }, { passive: true });
 
+  /* Keyboard selection of buildings. The city is a canvas, so without this
+   * every subsystem is reachable only by aiming a mouse at it. Tab/Shift+Tab
+   * walk the districts in pipeline order and open each one's panel. */
+  var kbIndex = -1;
+
+  function kbOrder() {
+    // pipeline order, then the outlying districts
+    var order = ["harbor", "yvalve", "lexer", "parser", "blrgen", "security",
+                 "met", "cmp", "exec", "btr", "sort", "cache", "pio", "lock",
+                 "mvcc", "tra", "gc", "delta", "gbak", "nbackup",
+                 "journal", "replicator", "replica"];
+    return order.filter(function (id) { return !!FB.byId[id]; });
+  }
+
+  function kbSelect(dir) {
+    var order = kbOrder();
+    kbIndex = (kbIndex + dir + order.length) % order.length;
+    var id = order[kbIndex];
+    selectedId = id;
+    focusOn(id, 1.35);
+    UI.showBuilding(id);
+    UI.announce(FB.byId[id].name + ", " + FB.byId[id].code + ". " +
+      (kbIndex + 1) + " of " + order.length + ".");
+  }
+
   window.addEventListener("keydown", function (e) {
     var tag = (e.target && e.target.tagName) || "";
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" ||
-        tag === "BUTTON") return;
+        tag === "BUTTON" || tag === "A") return;
+
+    if (e.key === "Tab") {
+      kbSelect(e.shiftKey ? -1 : 1);
+      e.preventDefault();
+      return;
+    }
+    if (e.key === "Enter" && selectedId) {
+      UI.showBuilding(selectedId);
+      e.preventDefault();
+      return;
+    }
     var step = 40;
     if (e.key === "ArrowLeft") cam.ox += step;
     else if (e.key === "ArrowRight") cam.ox -= step;

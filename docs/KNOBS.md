@@ -107,7 +107,11 @@ Things a Firebird engineer will notice are missing or wrong, listed so nobody
 has to discover them by reading the source:
 
 - **No SQL is parsed.** The DSQL district animates a pipeline; it does not
-  tokenize anything. Particles carry no statement text.
+  tokenize anything. Particles carry no statement text. If you want an engine
+  that really does parse it, [the real engine page](../engine.html) points at
+  [Electric Firebird](https://github.com/mariuz/electric-firebird) — Firebird
+  compiled to WebAssembly — so the model and the genuine article are one click
+  apart.
 - **The optimizer does not optimize.** Index vs sort is a coin flip weighted
   by the write mix, not a cost model.
 - **Page access is a two-tier hot/cold distribution**, not a real access
@@ -161,6 +165,18 @@ that the drift tests *can* go red — that breaking a documented knob name,
 putting DOM access in the simulation layer, dropping a latency bucket or
 colliding two semantic colours would each be caught. A green suite is only
 worth something if it is capable of turning red.
+
+A **fuzzer** then sweeps every combination of query rate, write mix, cache
+size, replication mode and replica health — 324 of them — stirring in sort
+memory, sweep, long transactions, nbackup locks and gbak, and asserts the
+model never produces a NaN, a negative counter, an unbounded queue, markers
+past `Next`, or a version chain out of step with its own count. Knobs that
+are individually sane can still combine into nonsense.
+
+A **soak** runs the worst settings for 90 seconds and checks the city is
+still doing work at the end rather than wedged. `test/index.html?soak=1`
+extends the fuzz and soak to their long form; the default stays short
+enough that people actually run it.
 
 ## Found something wrong?
 

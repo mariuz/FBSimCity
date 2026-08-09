@@ -21,6 +21,7 @@
     <button id="btn-decide" title="Operator decisions with real consequences">Decisions</button>
     <button id="btn-latency" title="Where a query's time actually goes">Latency</button>
     <a class="ghlink" href="lifecycle.html" title="Accessible text walk of the whole pipeline">Lifecycle</a>
+    <a class="ghlink" href="engine.html" title="Real Firebird compiled to WebAssembly — check the model against it">Real engine</a>
     <button id="btn-pause">⏸ Pause</button>
     <button id="btn-speed">1×</button>
     <button id="btn-theme">☀ Day</button>
@@ -144,7 +145,7 @@
   <span class="stat">delta <b id="st-delta"></b></span>
   <span class="stat">repl lag <b id="st-lag"></b> <span class="dim">(<b id="st-segs"></b> seg)</span></span>
   <span class="stat">model clock <b id="st-clock"></b></span>
-  <span class="stat version">v0.7.0</span>
+  <span class="stat version">v0.8.0</span>
 </footer>
 
 <div id="decide-dock" class="hidden">
@@ -164,6 +165,7 @@
 </div>
 
 <div id="whereami" class="hidden" aria-live="polite"></div>
+<div id="a11y-live" class="visually-hidden" role="status" aria-live="polite"></div>
 
 <div id="gesture-hint" class="hidden">
   <b>drag</b> to pan &nbsp;·&nbsp; <b>scroll</b> to zoom &nbsp;·&nbsp; <b>click</b> a building
@@ -200,6 +202,8 @@
     <button id="help-close" class="overlay-close" aria-label="Close">×</button>
     <h2>Keyboard &amp; mouse</h2>
     <table class="keys">
+      <tr><td><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd></td><td>step through every subsystem in pipeline order</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>reopen the selected subsystem's panel</td></tr>
       <tr><td><kbd>drag</kbd></td><td>pan the city</td></tr>
       <tr><td><kbd>scroll</kbd> / <kbd>pinch</kbd></td><td>zoom</td></tr>
       <tr><td><kbd>click</kbd></td><td>building story</td></tr>
