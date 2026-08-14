@@ -112,23 +112,34 @@
   </div>
 
   <p class="launch">
-    <a class="bigbtn" href="https://mariuz.github.io/electric-firebird/"
-       target="_blank" rel="noopener">Open the real engine →</a>
+    <a class="bigbtn" href="machine/">Open the machine room →</a>
   </p>
 
-  <p class="fine">It opens in its own tab, and that is not laziness — it is
-  the interesting part. Firebird's engine uses threads, so the WebAssembly
-  build needs <code>SharedArrayBuffer</code>, which browsers only hand to a
-  <em>cross-origin isolated</em> page. GitHub Pages cannot send the
-  <code>COOP</code>/<code>COEP</code> headers that grant isolation, so the
-  demo installs a service worker to synthesise them for itself — a trick that
-  only works for a page at the top level. Embedded in a frame here, the
-  engine would load its interface and then refuse to start, which is a worse
-  answer than a link.</p>
+  <p class="fine">The <a href="machine/">machine room</a> runs the engine on a
+  page of this site, with guided sequences that end in a number you can
+  compare against something the city draws. The
+  <a href="https://mariuz.github.io/electric-firebird/" target="_blank"
+     rel="noopener">Electric Firebird demo</a> is the same engine with the
+  project's own console around it.</p>
+
+  <p class="fine"><b>A correction to what this page said in v0.8.0.</b> It
+  claimed the engine could not be embedded here at all. The reasoning was
+  right up to the last step: Firebird's engine uses threads, so the build
+  needs <code>SharedArrayBuffer</code>, which browsers grant only to a
+  <em>cross-origin isolated</em> page, and GitHub Pages cannot send the
+  <code>COOP</code>/<code>COEP</code> headers that grant isolation. What was
+  missed is that a service worker can synthesise those headers for <em>any</em>
+  page that ships one — including this project's own — and that both projects
+  publish to <code>mariuz.github.io</code>, so the engine's assets are
+  same-origin and need no <code>CORP</code> header to be loaded under
+  <code>require-corp</code>. The measurement behind the old claim was real: an
+  iframe did report <em>not isolated</em>. It reported that because the page
+  doing the framing was not isolated either, which was the part not tested.</p>
 
   <h2>Check the model against it</h2>
-  <p>The city makes claims. Here are some you can settle for yourself in that
-  console, against a real engine, in a few seconds each.</p>
+  <p>The city makes claims. Here are some you can settle for yourself in a few
+  seconds each — the <a href="machine/">machine room</a> runs the first, second
+  and fourth of these for you and shows what the answer means.</p>
 
   <table>
     <tr><th>What the city shows</th><th>Ask the real engine</th></tr>
@@ -145,8 +156,11 @@
     </tr>
     <tr>
       <td>An UPDATE writes a new record version rather than overwriting.</td>
-      <td>Update a row inside a transaction, and read it from a second
-      attachment before committing. The old value is still there.</td>
+      <td><code>MON$RECORD_STATS</code>: update a row twice, then read
+      <code>MON$BACKVERSION_READS</code> and <code>MON$RECORD_PURGES</code>.
+      The engine counts the older versions it walked past, and the ones
+      garbage collection removed. (Reading the old value from a second
+      attachment shows the same thing, but the browser build has only one.)</td>
     </tr>
     <tr>
       <td>Firebird has no write-ahead log; the database is one file.</td>
@@ -178,8 +192,10 @@ await db.exec('CREATE TABLE items (id INTEGER, name VARCHAR(100))');
 const rows = await db.query('SELECT * FROM items WHERE id = ?', [1]);</code></pre>
   <p class="fine">Source and docs:
   <a href="https://github.com/mariuz/electric-firebird">github.com/mariuz/electric-firebird</a>.
-  FBSimCity does not bundle the engine — this page embeds the published demo,
-  so the city itself stays a single static page that makes no network calls.</p>
+  FBSimCity does not bundle the engine: the machine room loads it from Electric
+  Firebird's published build at the same origin, and 9 MB of WebAssembly stays
+  out of this repository. The city itself is untouched by all of this — it is
+  still a single static page that makes no network calls at all.</p>
 
   <p class="fine" style="margin-top:26px">Part of
   <a href="index.html">FBSimCity</a>. FBSimCity is an independent educational

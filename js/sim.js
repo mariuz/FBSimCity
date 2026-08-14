@@ -39,7 +39,7 @@ var Sim = (function () {
       hitRatio: 1,
 
       // stats
-      qps: 0, done: 0, statTimer: 0,
+      qps: 0, done: 0, completed: 0, statTimer: 0,
       lockWaits: 0, rollbacks: 0,
 
       // sweep
@@ -111,6 +111,28 @@ var Sim = (function () {
     setCacheSize(s, s.cacheSize);
     say(s, "Database on line. Cache " + s.cacheSize + " pages, sweep every " +
       s.sweepInterval + "s.");
+    return s;
+  }
+
+  /* The city is never empty on load.
+   *
+   * Without this a first-time visitor arrives at a database that has never
+   * run: every cache slot empty, one version per tower, and OIT/OAT/Next
+   * sitting exactly where they were initialised. That teaches nothing, and
+   * worse, it teaches something false — a real Firebird database you open
+   * has a history behind it. PGSimCity shipped the same defect and fixed it
+   * the same way; ours was found by looking for it after reading theirs.
+   *
+   * Quiet, in two senses: the message log is restored afterwards, so the
+   * first line the reader sees is the one about the database coming on line
+   * rather than 25 seconds of backfill, and no challenge can open, because
+   * challenges only ever start from an explicit call.
+   */
+  function warm(s, seconds) {
+    var log = s.log.slice();
+    var n = Math.round(Math.max(0, Math.min(120, seconds || 0)) * 60);
+    for (var i = 0; i < n; i++) tick(s, 1 / 60);
+    s.log = log;
     return s;
   }
 
@@ -394,7 +416,8 @@ var Sim = (function () {
         break;
       case "done":
         q.dead = true;
-        s.done++;
+        s.done++;      // reset every stats window
+        s.completed++; // lifetime, so the qps readout can be checked against it
         recordLatency(s, q);
         break;
     }
@@ -1070,6 +1093,7 @@ var Sim = (function () {
   return {
     create: create,
     tick: tick,
+    warm: warm,
     setCacheSize: setCacheSize,
     setLongTxn: setLongTxn,
     startSweep: startSweep,

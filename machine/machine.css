@@ -1,0 +1,164 @@
+/* FBSimCity — machine room. Same palette as the city, laid out as a page
+   rather than a canvas, so it reads on a phone and in a screen reader. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0b0e1a;
+  color: #dce4ff;
+  font: 13.5px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+  padding: 26px 16px 60px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+a { color: #74c0fc; }
+h1 {
+  font-size: 25px;
+  background: linear-gradient(90deg, #ffa94d, #ff6b6b, #c084fc);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  margin-bottom: 8px;
+}
+h2 { font-size: 15px; color: #fff; margin-bottom: 8px; letter-spacing: 0.3px; }
+h3 { font-size: 13.5px; color: #fff; margin-bottom: 4px; }
+p { color: #c3cdf1; margin-bottom: 10px; }
+.lead { color: #9aa7d4; max-width: 74ch; }
+.fine { font-size: 12px; color: #8b97c4; max-width: 82ch; }
+.kicker {
+  font-size: 11px; letter-spacing: 2.5px; text-transform: uppercase;
+  color: #ffa94d; margin-bottom: 4px;
+}
+.backlink { margin: 16px 0 22px; font-size: 12.5px; }
+code {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.94em;
+  background: rgba(120,140,210,0.14);
+  padding: 1px 5px; border-radius: 4px;
+}
+kbd {
+  font-family: inherit; font-size: 11px;
+  border: 1px solid rgba(120,140,210,0.4); border-radius: 4px;
+  padding: 0 4px; color: #9aa7d4;
+}
+
+/* ---- masthead ---- */
+.masthead {
+  display: flex; gap: 24px; align-items: flex-start;
+  justify-content: space-between; flex-wrap: wrap;
+}
+.status {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid rgba(120,140,210,0.3); border-radius: 999px;
+  padding: 6px 14px; font-size: 12.5px; white-space: nowrap;
+  background: rgba(16,20,40,0.7);
+}
+.status .dot { width: 8px; height: 8px; border-radius: 50%; background: #fcc419; }
+.status[data-state="ready"] .dot { background: #51cf66; }
+.status[data-state="error"] .dot { background: #e03131; }
+.status[data-state="busy"] .dot { background: #4dabf7; }
+
+/* ---- engine markers ---- */
+.markers {
+  border: 1px solid rgba(120,140,210,0.3); border-radius: 10px;
+  background: rgba(16,20,40,0.7); padding: 14px 16px; margin-bottom: 22px;
+}
+.marker-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+.marker {
+  flex: 1 1 140px; border: 1px solid rgba(120,140,210,0.22);
+  border-radius: 8px; padding: 8px 10px; background: rgba(11,14,26,0.6);
+}
+.mk-label { display: block; font-size: 11px; color: #8b97c4; }
+.mk-val {
+  display: block; font-size: 19px; color: #ffd8a8;
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+/* ---- layout ---- */
+main { display: grid; grid-template-columns: 320px 1fr; gap: 18px; }
+@media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+
+.sequences, .bench, .wide {
+  border: 1px solid rgba(120,140,210,0.3); border-radius: 10px;
+  background: rgba(16,20,40,0.7); padding: 14px 16px;
+}
+.wide { margin-top: 18px; }
+
+.sequences ol { list-style: none; margin-top: 10px; }
+.sequences li { margin-bottom: 8px; }
+.seq-btn {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  border: 1px solid rgba(120,140,210,0.28); border-radius: 8px;
+  background: rgba(11,14,26,0.6); color: #dce4ff;
+  padding: 9px 11px; font: inherit;
+}
+.seq-btn:hover, .seq-btn:focus-visible {
+  border-color: #ffa94d; background: rgba(255,169,77,0.08);
+}
+.seq-btn b { display: block; color: #fff; font-size: 12.8px; }
+.seq-btn span { display: block; color: #8b97c4; font-size: 11.5px; }
+
+/* ---- workbench ---- */
+.field-label { display: block; font-size: 11.5px; color: #8b97c4; margin-bottom: 5px; }
+textarea {
+  width: 100%; resize: vertical;
+  font-family: "Cascadia Code", Consolas, monospace; font-size: 12.5px;
+  line-height: 1.55; color: #dce4ff; background: #070a14;
+  border: 1px solid rgba(120,140,210,0.3); border-radius: 8px; padding: 10px 12px;
+}
+textarea:focus { outline: 2px solid #4dabf7; outline-offset: 1px; }
+.actions { display: flex; align-items: center; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+button {
+  font: inherit; cursor: pointer; border-radius: 7px; padding: 7px 14px;
+  border: 1px solid rgba(120,140,210,0.35);
+  background: rgba(120,140,210,0.12); color: #dce4ff;
+}
+button:hover:not(:disabled) { border-color: #74c0fc; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary { background: #ffa94d; border-color: #ffa94d; color: #241503; font-weight: 600; }
+button.ghost { background: transparent; }
+.timing { font-size: 11.5px; color: #8b97c4; font-family: "Cascadia Code", Consolas, monospace; }
+
+.result { margin-top: 4px; max-height: 460px; overflow: auto; }
+.placeholder { color: #6b779e; font-size: 12.5px; }
+.step {
+  border-top: 1px solid rgba(120,140,210,0.18);
+  padding: 10px 0 4px; margin-top: 6px;
+}
+.step:first-child { border-top: 0; }
+.step-sql {
+  font-family: "Cascadia Code", Consolas, monospace; font-size: 11.8px;
+  color: #9aa7d4; white-space: pre-wrap; margin-bottom: 6px;
+}
+.verdict {
+  border-left: 3px solid #51cf66; padding: 6px 10px; margin: 8px 0 2px;
+  background: rgba(81,207,102,0.07); font-size: 12.5px; color: #d3f9d8;
+}
+.verdict.miss { border-left-color: #fcc419; background: rgba(252,196,25,0.08); color: #ffe8a3; }
+.err {
+  border-left: 3px solid #e03131; padding: 8px 11px; margin: 6px 0;
+  background: rgba(224,49,49,0.09); color: #ffc9c9;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11.8px; white-space: pre-wrap;
+}
+.note { font-size: 12px; color: #8b97c4; margin: 6px 0 2px; }
+
+table { border-collapse: collapse; width: 100%; font-size: 12.3px; }
+th, td {
+  border: 1px solid rgba(120,140,210,0.22); padding: 5px 9px;
+  text-align: left; vertical-align: top;
+}
+th { color: #9aa7d4; font-weight: 600; background: rgba(120,140,210,0.08); }
+td { font-family: "Cascadia Code", Consolas, monospace; color: #dce4ff; }
+.map td { font-family: inherit; }
+.map td:last-child { font-family: "Cascadia Code", Consolas, monospace; font-size: 11.8px; }
+.rows-note { font-size: 11.5px; color: #8b97c4; margin-top: 5px; }
+
+.limits { margin: 6px 0 0 18px; }
+.limits li { color: #c3cdf1; margin-bottom: 7px; }
+
+footer { margin-top: 26px; padding-top: 14px; border-top: 1px solid rgba(120,140,210,0.2); }
+footer p { margin-bottom: 8px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .status[data-state="busy"] .dot { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.3; } }
+}

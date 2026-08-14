@@ -108,10 +108,14 @@ has to discover them by reading the source:
 
 - **No SQL is parsed.** The DSQL district animates a pipeline; it does not
   tokenize anything. Particles carry no statement text. If you want an engine
-  that really does parse it, [the real engine page](../engine.html) points at
-  [Electric Firebird](https://github.com/mariuz/electric-firebird) — Firebird
-  compiled to WebAssembly — so the model and the genuine article are one click
-  apart.
+  that really does parse it, the [machine room](../machine/) runs one: Firebird
+  compiled to WebAssembly by
+  [Electric Firebird](https://github.com/mariuz/electric-firebird), in the
+  page, so the model and the genuine article are one click apart.
+- **The city you arrive at has already been running.** Loading warms the model
+  for 25 model seconds before the first frame, so the cache is populated, the
+  towers have versions and the markers have moved. A database that has never
+  run is not a neutral starting point — it is a state you will never meet.
 - **The optimizer does not optimize.** Index vs sort is a coin flip weighted
   by the write mix, not a cost model.
 - **Page access is a two-tier hot/cold distribution**, not a real access
@@ -177,6 +181,14 @@ A **soak** runs the worst settings for 90 seconds and checks the city is
 still doing work at the end rather than wedged. `test/index.html?soak=1`
 extends the fuzz and soak to their long form; the default stays short
 enough that people actually run it.
+
+Since v0.9.0 the suite also walks the **readouts** and compares each one with
+the model behind it. This is the class PGSimCity's v0.40.0 hunt found most of
+its defects in: the simulation moves and the text that describes it does not,
+so the city says something the model stopped doing. The **throughput** figure
+gets a stricter version of the same check — completions are counted
+independently and the readout has to be reporting them, because a gauge that
+drifts will happily paint a healthy city red.
 
 ## Found something wrong?
 

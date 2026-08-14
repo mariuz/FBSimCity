@@ -44,8 +44,8 @@ docs/KNOBS.md make claims, and this is what stops them going quietly stale.</p>
 // harness never calls.
 (function () {
   var v = Date.now();
-  ["../js/data.js", "../js/sim.js", "../js/render.js", "../js/ui.js",
-   "tests.js"].forEach(function (src) {
+  ["../js/data.js", "../js/camera.js", "../js/sim.js", "../js/render.js",
+   "../js/ui.js", "tests.js"].forEach(function (src) {
     document.write('<script src="' + src + '?v=' + v + '"><\/script>');
   });
 })();

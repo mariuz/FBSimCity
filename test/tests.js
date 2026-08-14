@@ -678,6 +678,293 @@
     t.ok("UI exposes an announce hook", typeof UI.announce === "function");
   }
 
+  // ---- 8. the city is never empty on load ------------------------------
+  // A first-time visitor used to arrive at a database that had never run:
+  // every cache slot empty, one version per tower, and the markers exactly
+  // where create() left them. That is not a quiet start, it is a false one —
+  // no Firebird database you open has no history behind it.
+
+  function testWarmStart() {
+    var cold = Sim.create();
+    var warm = Sim.warm(Sim.create(), 25);
+
+    var coldFilled = cold.cache.filter(function (c) { return c.page >= 0; }).length;
+    var warmFilled = warm.cache.filter(function (c) { return c.page >= 0; }).length;
+    t.ok("a cold city really is empty", coldFilled === 0,
+      coldFilled + " pages already resident before warming");
+    t.ok("warming populates the page cache", warmFilled > 20,
+      "only " + warmFilled + " of " + warm.cache.length + " slots resident");
+
+    t.ok("warming writes record versions",
+      warm.totalVersions > cold.totalVersions,
+      warm.totalVersions + " vs " + cold.totalVersions);
+    t.ok("warming advances the transaction markers", warm.next > cold.next,
+      "next stayed at " + warm.next);
+    t.ok("warming leaves work behind it", warm.time >= 24 && warm.time <= 26,
+      "model clock at " + warm.time);
+    t.ok("warming produces a hit ratio worth showing",
+      warm.hitRatio > 0 && warm.hitRatio <= 1, String(warm.hitRatio));
+
+    // Quiet: the reader's first log line should be the one about the
+    // database coming on line, not 25 seconds of backfill.
+    t.eq("warming does not fill the message log",
+      warm.log.length, cold.log.length);
+
+    // and it must stay bounded — warming is not an excuse to leak
+    t.ok("warming leaves the version chains capped",
+      warm.tables.every(function (tb) { return tb.chain.length <= 26; }));
+    t.ok("warming keeps the markers ordered",
+      warm.oit <= warm.oat && warm.oat <= warm.next,
+      warm.oit + " / " + warm.oat + " / " + warm.next);
+
+    // bounds: junk seconds must not spin or explode
+    var junk = Sim.warm(Sim.create(), -5);
+    t.eq("negative warm seconds do nothing", junk.time, 0);
+    var capped = Sim.warm(Sim.create(), 1e6);
+    t.ok("warm seconds are capped", capped.time <= 120.5, String(capped.time));
+  }
+
+  // ---- 8b. camera arithmetic -------------------------------------------
+  // Ported after PGSimCity's v0.39.3, where two fingers failed to turn the
+  // city because per-contact events paired one finger's new position with
+  // the other's stale one. Ours reads every contact at once; these check
+  // that the reading holds up, including the cases that produced the jumps.
+
+  function testCamera() {
+    var ZMIN = 0.3, ZMAX = 2.4;
+    function cam() { return { ox: 0, oy: 0, zoom: 1, target: { zoom: 2 } }; }
+    var rect = { left: 0, top: 0 };
+
+    // zoom must keep the anchor point over the same world position
+    var c = cam();
+    var before = { x: (300 - c.ox) / c.zoom, y: (200 - c.oy) / c.zoom };
+    Camera.zoomAt(c, 300, 200, 1.7, ZMIN, ZMAX);
+    var after = { x: (300 - c.ox) / c.zoom, y: (200 - c.oy) / c.zoom };
+    t.ok("zoom keeps the anchor point fixed",
+      Math.abs(before.x - after.x) < 1e-9 && Math.abs(before.y - after.y) < 1e-9,
+      before.x + "," + before.y + " → " + after.x + "," + after.y);
+    t.ok("zoom cancels a camera fly-to", c.target === null);
+    t.ok("zoom respects the maximum",
+      Camera.zoomAt(cam(), 0, 0, 99, ZMIN, ZMAX).zoom === ZMAX);
+    t.ok("zoom respects the minimum",
+      Camera.zoomAt(cam(), 0, 0, 0.001, ZMIN, ZMAX).zoom === ZMIN);
+
+    // a gesture is derived from every contact, so delivery order cannot matter
+    var a = [{ clientX: 100, clientY: 100 }, { clientX: 300, clientY: 100 }];
+    var g1 = Camera.gestureOf(a);
+    var g2 = Camera.gestureOf([a[1], a[0]]);
+    t.ok("gesture is independent of contact order",
+      g1.cx === g2.cx && g1.cy === g2.cy && g1.spread === g2.spread);
+    t.eq("gesture centroid is the mean", g1.cx, 200);
+    t.eq("empty contact list is no gesture", Camera.gestureOf([]), null);
+
+    // two fingers moving together pan and do not zoom
+    var c2 = cam();
+    var prev = Camera.gestureOf(a);
+    var cur = Camera.gestureOf([
+      { clientX: 140, clientY: 130 }, { clientX: 340, clientY: 130 }
+    ]);
+    Camera.applyGesture(c2, prev, cur, rect, ZMIN, ZMAX);
+    t.ok("a parallel two-finger drag pans", c2.ox === 40 && c2.oy === 30,
+      c2.ox + "," + c2.oy);
+    t.ok("a parallel two-finger drag does not zoom",
+      Math.abs(c2.zoom - 1) < 1e-12, String(c2.zoom));
+
+    // a pinch zooms about the fingers, not about the canvas origin
+    var c3 = cam();
+    var wide = Camera.gestureOf([
+      { clientX: 0, clientY: 100 }, { clientX: 400, clientY: 100 }
+    ]);
+    var mid = { x: (200 - c3.ox) / c3.zoom, y: (100 - c3.oy) / c3.zoom };
+    Camera.applyGesture(c3, prev, wide, rect, ZMIN, ZMAX);
+    var mid2 = { x: (200 - c3.ox) / c3.zoom, y: (100 - c3.oy) / c3.zoom };
+    t.ok("a pinch scales the camera", c3.zoom > 1.5, String(c3.zoom));
+    t.ok("a pinch is anchored on the fingers",
+      Math.abs(mid.x - mid2.x) < 1e-9 && Math.abs(mid.y - mid2.y) < 1e-9,
+      mid.x + "," + mid.y + " → " + mid2.x + "," + mid2.y);
+
+    // the jumps: a finger landing or lifting must commit nothing
+    var c4 = cam();
+    var three = Camera.gestureOf([
+      { clientX: 100, clientY: 100 }, { clientX: 300, clientY: 100 },
+      { clientX: 200, clientY: 400 }
+    ]);
+    var moved = Camera.applyGesture(c4, prev, three, rect, ZMIN, ZMAX);
+    t.ok("a third finger landing is not a gesture", moved === false);
+    t.ok("a third finger landing moves nothing",
+      c4.ox === 0 && c4.oy === 0 && c4.zoom === 1,
+      c4.ox + "," + c4.oy + "," + c4.zoom);
+    var c5 = cam();
+    t.ok("a finger lifting is not a gesture",
+      Camera.applyGesture(c5, three, prev, rect, ZMIN, ZMAX) === false);
+    t.ok("a finger lifting moves nothing", c5.zoom === 1);
+
+    // one finger pans, and never zooms however far it travels
+    var c6 = cam();
+    var p1 = Camera.gestureOf([{ clientX: 10, clientY: 10 }]);
+    var p2 = Camera.gestureOf([{ clientX: 260, clientY: 90 }]);
+    Camera.applyGesture(c6, p1, p2, rect, ZMIN, ZMAX);
+    t.ok("one finger pans", c6.ox === 250 && c6.oy === 80,
+      c6.ox + "," + c6.oy);
+    t.eq("one finger never zooms", c6.zoom, 1);
+
+    // and a gesture that does not move must not drift the camera
+    var c7 = cam();
+    Camera.applyGesture(c7, prev, Camera.gestureOf(a), rect, ZMIN, ZMAX);
+    t.ok("a still gesture leaves the camera alone",
+      c7.ox === 0 && c7.oy === 0 && Math.abs(c7.zoom - 1) < 1e-12);
+
+    // Meta: the anchor check above is the whole point of this section, so
+    // prove it can go red. This is the exact defect it exists to catch — a
+    // zoom that changes scale without moving the origin to compensate.
+    var broken = { ox: 0, oy: 0, zoom: 1, target: null };
+    var beforeB = { x: (300 - broken.ox) / broken.zoom };
+    broken.zoom = 1.7; // scale only, no compensation
+    var afterB = { x: (300 - broken.ox) / broken.zoom };
+    t.ok("the anchor check would catch a drifting zoom",
+      Math.abs(beforeB.x - afterB.x) > 1,
+      "a zoom that ignores the anchor moved the point by " +
+      Math.abs(beforeB.x - afterB.x));
+
+    // Meta: and that the contact-count guard is what stops the jump, rather
+    // than the numbers happening to line up.
+    var jumpy = cam();
+    jumpy.ox = 0; jumpy.oy = 0;
+    var pretendSameCount = { n: three.n, cx: prev.cx, cy: prev.cy, spread: prev.spread };
+    Camera.applyGesture(jumpy, pretendSameCount, three, rect, ZMIN, ZMAX);
+    t.ok("without the count guard a landing finger would move the city",
+      jumpy.ox !== 0 || jumpy.oy !== 0 || jumpy.zoom !== 1,
+      "the guard is not what is holding this still");
+  }
+
+  // ---- 8c. the readouts agree with the model ---------------------------
+  // PGSimCity's v0.40.0 hunt: twelve of nineteen defects were surfaces that
+  // disagreed with the simulation behind them. Text is easy to leave behind
+  // when the model moves. This walks the panels and compares.
+
+  function testSurfaces() {
+    function txt(id) {
+      var e = document.getElementById(id);
+      return e ? e.textContent.trim() : null;
+    }
+
+    // The readouts only exist once the UI is bound to them, so this is also
+    // the one test that runs the real init path against the real markup.
+    var s = Sim.create();
+    try {
+      UI.init(s, function () { });
+    } catch (e) {
+      t.ok("UI.init binds against the shipped markup", false, String(e));
+      return;
+    }
+    t.ok("UI.init binds against the shipped markup", true);
+    Sim.warm(s, 30);
+    UI.updateStats(s);
+
+    t.eq("the query-rate readout matches the model",
+      txt("st-qps"), s.qps.toFixed(1));
+    t.eq("the version total matches the model",
+      txt("st-vers"), String(s.totalVersions));
+    t.eq("the OIT readout matches the model", txt("st-oit"), String(s.oit));
+    t.eq("the OAT readout matches the model", txt("st-oat"), String(s.oat));
+    t.eq("the next-transaction readout matches the model",
+      txt("st-next"), String(s.next));
+    t.eq("the eviction readout matches the model",
+      txt("st-evict"), String(s.evictions));
+    t.eq("the dirty-eviction readout matches the model",
+      txt("st-dirty"), String(s.dirtyEvictions));
+    t.eq("the segment readout matches the model",
+      txt("st-segs"), String(s.repl.segments.length));
+
+    // the reported hit ratio must be the model's, within its own rounding
+    var hit = parseFloat((txt("st-hit") || "").replace("%", ""));
+    t.ok("the hit-ratio readout matches the model",
+      Math.abs(hit - s.hitRatio * 100) <= 0.51,
+      "panel " + hit + "%, model " + (s.hitRatio * 100).toFixed(2) + "%");
+
+    // a readout that says a thing is pinned must have something pinning it
+    var pin = txt("st-pin") || "";
+    t.ok("the pin warning only appears when something pins the OIT",
+      pin === "" || s.pinned !== null || s.backup.gbakTxn !== null,
+      "panel says " + JSON.stringify(pin) + " with nothing pinned");
+
+    // and the same must hold once the model is in an unusual state
+    var s2 = Sim.warm(Sim.create(), 10);
+    Sim.setLongTxn(s2, true);
+    run(s2, 4);
+    UI.updateStats(s2);
+    t.eq("the OIT readout follows a pinned transaction",
+      txt("st-oit"), String(s2.oit));
+    t.ok("the pin warning appears when a long transaction pins the OIT",
+      (txt("st-pin") || "").indexOf("txn") !== -1,
+      "panel says " + JSON.stringify(txt("st-pin")));
+    Sim.setReplHealth(s2, "down");
+    run(s2, 6);
+    UI.updateStats(s2);
+    t.eq("the lag readout follows the replication model",
+      txt("st-lag"),
+      s2.repl.disabled ? "STOPPED"
+        : s2.repl.mode === "off" ? "off" : String(Sim.replLag(s2)));
+  }
+
+  // ---- 8d. the throughput readout is not an estimate -------------------
+  // PGSimCity shipped a gauge that swung between 0.56 and 25.83 while the
+  // real rate held near 10, and painted the city red for it. Ours smooths
+  // over a one-second window; this counts completions independently and
+  // asserts the readout is actually reporting them.
+
+  function testThroughputHonesty() {
+    var s = Sim.warm(Sim.create(), 20);
+    s.queryRate = 10;
+    var counted = 0, windows = 0, worst = 0;
+    for (var w = 0; w < 12; w++) {
+      // s.completed only ever grows, so it counts the same events the
+      // readout claims to summarise, without going through the readout
+      var startTotal = s.completed;
+      run(s, 1);
+      var got = s.completed - startTotal;
+      counted += got; windows++;
+      worst = Math.max(worst, Math.abs(s.qps - got));
+    }
+    var mean = counted / windows;
+    t.ok("the city actually completes queries", counted > 0);
+    t.ok("the throughput readout tracks the work done",
+      Math.abs(s.qps - mean) < mean * 0.5 + 1,
+      "readout " + s.qps.toFixed(2) + " against a measured mean of " +
+      mean.toFixed(2));
+    t.ok("the throughput readout stays inside its window",
+      worst < mean + 6, "worst single-window gap " + worst.toFixed(2));
+  }
+
+  // ---- 8e. the machine room states what it cannot do -------------------
+  // The page runs the real engine, which invites the assumption that
+  // everything on it is therefore real. It must say otherwise, in the page
+  // itself rather than only in a commit message.
+
+  function testMachineRoom(html, js) {
+    t.ok("the machine room exists", html.length > 0);
+    t.ok("the machine room is linked from the city",
+      (window.__indexHtml || "").indexOf('href="machine/"') !== -1);
+    t.ok("the machine room names its limits",
+      /cannot show you/i.test(html));
+    ["replication", "gbak", "sweep", "attachment"].forEach(function (word) {
+      t.ok("the machine room admits it cannot show " + word,
+        new RegExp(word, "i").test(html));
+    });
+    t.ok("the machine room explains cross-origin isolation",
+      /SharedArrayBuffer/.test(html) && /coi-serviceworker/.test(html));
+    t.ok("the machine room degrades rather than showing an empty box",
+      /function fail\(/.test(js) && /crossOriginIsolated/.test(js));
+    t.ok("every sequence computes its verdict from the results",
+      (js.match(/verdict\(res\)/g) || []).length >= 6);
+    t.ok("no sequence asserts a verdict unconditionally",
+      (js.match(/ok:\s*true/g) || []).length <= 1,
+      "found " + (js.match(/ok:\s*true/g) || []).length +
+      " verdicts that cannot fail");
+    t.ok("the engine is loaded same-origin, which is what makes it possible",
+      /'\/electric-firebird\//.test(js));
+  }
+
   // ---- runner ----------------------------------------------------------
 
   /* Cache-bust: a test suite that reads a stale copy of the source or the
@@ -695,8 +982,11 @@
       fetchText("../docs/KNOBS.md"),
       fetchText("../README.md"),
       fetchText("../lifecycle.html"),
-      fetchText("../index.html")
+      fetchText("../index.html"),
+      fetchText("../machine/index.html"),
+      fetchText("../machine/machine.js")
     ]).then(function (files) {
+      window.__indexHtml = files[4];
       testPurity(files[0]);
       testKnobs(files[1]);
       testLatency();
@@ -711,6 +1001,11 @@
       testFuzz();
       testSoak();
       testAccessibility(files[3]);
+      testWarmStart();
+      testCamera();
+      testSurfaces();
+      testThroughputHonesty();
+      testMachineRoom(files[5], files[6]);
 
       var passed = results.filter(function (r) { return r.pass; }).length;
       window.FBTestResults = {

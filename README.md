@@ -126,6 +126,38 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
   exactly
   [this link](https://mariuz.github.io/FBSimCity/?scenario=thrash&warp=90&dock=latency)).
 
+## The machine room — the real engine, in the page
+
+**[mariuz.github.io/FBSimCity/machine/](https://mariuz.github.io/FBSimCity/machine/)**
+
+The city is a model. The [machine room](machine/) is the other thing: the
+actual Firebird embedded engine compiled to WebAssembly by
+[Electric Firebird](https://github.com/mariuz/electric-firebird), running in a
+worker on the page, with a SQL workbench and six guided sequences that each
+end in a number you can hold against something the city draws.
+
+| Sequence | What the engine is asked | What it settles |
+|---|---|---|
+| Every statement gets a transaction | `CURRENT_TRANSACTION`, twice | The Transaction Hall's per-query id is the engine's behaviour, not a device |
+| OIT, OAT and Next | `MON$DATABASE` | The three markers over the yard are columns in a monitoring table |
+| An UPDATE writes a version | `MON$RECORD_STATS` back-version reads and purges | The towers grow floors because the engine really does keep the old rows |
+| The catalogue is ordinary tables | `RDB$RELATIONS` | Metadata is a district, not a special mechanism |
+| A fetch is not a read | `MON$IO_STATS` fetches against reads | The cache plaza is exactly this distinction |
+| No write-ahead log | `MON$DATABASE` settings | Page size, buffers, sweep interval, forced writes — and no log setting, because there is no log |
+
+Every verdict is computed from what came back, so a sequence can report that
+the answer was *not* what was expected. The page also states plainly what the
+runtime cannot show — one attachment means no lock waits to watch, there is no
+replica, and `gbak`/`nbackup` are separate programs against a file that does
+not exist here.
+
+The engine is loaded from Electric Firebird's published build at the same
+origin, so no WebAssembly is vendored into this repository and the city itself
+still makes no network calls at all. Getting it to run inside the page needs
+`SharedArrayBuffer`, which needs cross-origin isolation, which GitHub Pages
+cannot grant — a service worker supplies the headers. v0.8.0 claimed this
+embed was impossible; it was wrong, and [engine.html](engine.html) records why.
+
 ## Found something wrong?
 
 Every building panel and the latency view carry a **report** link that opens
@@ -186,9 +218,14 @@ then open <http://localhost:8000/>.
 - `js/render.js` — isometric canvas renderer (*structure is matte, meaning
   is neon*)
 - `js/ui.js` — control room, stats bar, info panel, guided tour
-- `js/main.js` — camera, input, main loop
+- `js/main.js` — bootstrap, input, main loop
+- `js/camera.js` — camera arithmetic: zoom anchoring and touch gestures,
+  split out so it can be tested without a canvas or a touchscreen
 - `lifecycle.html` — the accessible text walk of the pipeline
-- `engine.html` — the real engine: Electric Firebird, and claims to check
+- `machine/` — the machine room: the real engine, a SQL workbench and the
+  guided sequences that check the city against it
+- `engine.html` — what Electric Firebird is, and where the model is knowingly
+  wrong
 - `docs/KNOBS.md` — knob audit: what every control really does
 - `test/` — the test suite (open `test/index.html`; no framework, no build)
 - `tools/screenshot.ps1` — regenerates `docs/screenshot.png` from a deep link
@@ -211,6 +248,13 @@ distinguishable, including under simulated deuteranopia.
 That last check earned its keep immediately: it found that the hit and miss
 flashes had a contrast ratio of 1.18, meaning they differed in hue but barely
 in brightness. They now differ in hue, luminance *and* size.
+
+It also checks that the **readouts agree with the model** — the stats bar is
+generated text, and text is easy to leave behind when the model moves — that
+the throughput figure is within reach of an independently counted number of
+completed queries rather than an estimate that can wander, and that the camera
+keeps whatever you zoomed towards under the point you zoomed at, including for
+pinch gestures and for a third finger landing mid-pinch.
 
 **Camera:** drag to pan, scroll or pinch to zoom, arrow keys to pan, `+` / `−`
 to zoom. There is no rotation — the city is a fixed isometric projection.

@@ -10,6 +10,7 @@
   // has one set of numbers to blame
   var ZOOM_MIN = 0.3, ZOOM_MAX = 2.4, ZOOM_FIT_MAX = 1.6;
   var WHEREAMI_ZOOM = 1.45; // identify the building at screen center from here in
+  var WARM_SECONDS = 25;    // model seconds run before the first frame is drawn
 
   var cam = { ox: 0, oy: 0, zoom: 1, target: null };
   var hoverId = null, selectedId = null;
@@ -108,56 +109,38 @@
       selectedId = null;
     }
   });
+  // camera arithmetic lives in js/camera.js so it can be tested without a
+  // canvas or a touchscreen; these wrappers just supply the zoom range
+  function zoomAt(mx, my, factor) {
+    Camera.zoomAt(cam, mx, my, factor, ZOOM_MIN, ZOOM_MAX);
+  }
+
   canvas.addEventListener("wheel", function (e) {
     e.preventDefault();
     var r = canvas.getBoundingClientRect();
-    var mx = e.clientX - r.left, my = e.clientY - r.top;
-    var f = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-    var nz = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cam.zoom * f));
-    f = nz / cam.zoom;
-    cam.ox = mx - (mx - cam.ox) * f;
-    cam.oy = my - (my - cam.oy) * f;
-    cam.zoom = nz;
-    cam.target = null;
+    zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 1 / 1.12);
   }, { passive: false });
 
-  // touch: one-finger pan, two-finger pinch zoom
-  var touches = {};
+  /* Touch: pan and pinch, from a snapshot of every contact at once. The
+   * arithmetic — and the reason it is done this way — is in js/camera.js. */
+  var gesture = null;
   canvas.addEventListener("touchstart", function (e) {
-    for (var i = 0; i < e.changedTouches.length; i++) {
-      var t = e.changedTouches[i];
-      touches[t.identifier] = { x: t.clientX, y: t.clientY };
-    }
+    gesture = Camera.gestureOf(e.touches);
   }, { passive: true });
   canvas.addEventListener("touchmove", function (e) {
     e.preventDefault();
-    var ids = Object.keys(touches);
-    if (e.touches.length === 1 && ids.length >= 1) {
-      var t = e.touches[0], p = touches[t.identifier];
-      if (p) {
-        cam.ox += t.clientX - p.x; cam.oy += t.clientY - p.y;
-        p.x = t.clientX; p.y = t.clientY;
-        cam.target = null;
-      }
-    } else if (e.touches.length === 2) {
-      var a = e.touches[0], b = e.touches[1];
-      var pa = touches[a.identifier], pb = touches[b.identifier];
-      if (pa && pb) {
-        var d0 = Math.hypot(pa.x - pb.x, pa.y - pb.y);
-        var d1 = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-        if (d0 > 0) {
-          cam.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cam.zoom * (d1 / d0)));
-        }
-        pa.x = a.clientX; pa.y = a.clientY;
-        pb.x = b.clientX; pb.y = b.clientY;
-      }
-    }
+    var cur = Camera.gestureOf(e.touches);
+    // a false return means the contact count changed: re-baseline, commit
+    // nothing, so a landing or lifting finger cannot read as a pinch
+    Camera.applyGesture(cam, gesture, cur, canvas.getBoundingClientRect(),
+      ZOOM_MIN, ZOOM_MAX);
+    gesture = cur;
   }, { passive: false });
-  canvas.addEventListener("touchend", function (e) {
-    for (var i = 0; i < e.changedTouches.length; i++) {
-      delete touches[e.changedTouches[i].identifier];
-    }
-  }, { passive: true });
+  function endTouch(e) { gesture = Camera.gestureOf(e.touches); }
+  canvas.addEventListener("touchend", endTouch, { passive: true });
+  // Without this, an OS-cancelled gesture (a notification, palm rejection)
+  // leaves the last positions behind and the next touch jumps.
+  canvas.addEventListener("touchcancel", endTouch, { passive: true });
 
   /* Keyboard selection of buildings. The city is a canvas, so without this
    * every subsystem is reachable only by aiming a mouse at it. Tab/Shift+Tab
@@ -204,9 +187,13 @@
     else if (e.key === "ArrowRight") cam.ox -= step;
     else if (e.key === "ArrowUp") cam.oy += step;
     else if (e.key === "ArrowDown") cam.oy -= step;
-    else if (e.key === "+" || e.key === "=") cam.zoom = Math.min(ZOOM_MAX, cam.zoom * 1.1);
-    else if (e.key === "-") cam.zoom = Math.max(ZOOM_MIN, cam.zoom / 1.1);
-    else {
+    else if (e.key === "+" || e.key === "=" || e.key === "-") {
+      // about the screen centre, for the same reason the wheel zooms about
+      // the cursor: whatever you were looking at stays where it was
+      zoomAt(canvas.clientWidth / 2, canvas.clientHeight / 2,
+        e.key === "-" ? 1 / 1.1 : 1.1);
+      return;
+    } else {
       if (UI.handleKey(e.key)) e.preventDefault();
       return;
     }
@@ -302,7 +289,12 @@
   resize();
   fitCamera();
 
-  // deep link: ?warp=45 fast-forwards the simulation 45 seconds at load
+  // The city is never empty on load: 25 model seconds before the first frame.
+  Sim.warm(sim, WARM_SECONDS);
+
+  // deep link: ?warp=45 fast-forwards the simulation 45 seconds at load.
+  // parseInt gives NaN for junk and every comparison against NaN is false,
+  // so "?warp=soon" and "?warp=-1" both land on the ordinary warm city.
   try {
     var warp = parseInt(new URLSearchParams(location.search).get("warp"), 10);
     if (warp > 0) {
@@ -317,5 +309,9 @@
   requestAnimationFrame(frame);
 
   // debug/test hook (not part of the public surface)
-  window.FBDebug = { cam: cam, clampCamera: clampCamera, fitCamera: fitCamera };
+  window.FBDebug = {
+    cam: cam, clampCamera: clampCamera, fitCamera: fitCamera,
+    zoomAt: zoomAt, WARM_SECONDS: WARM_SECONDS,
+    ZOOM_MIN: ZOOM_MIN, ZOOM_MAX: ZOOM_MAX
+  };
 })();

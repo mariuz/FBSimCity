@@ -21,7 +21,7 @@
     <button id="btn-decide" title="Operator decisions with real consequences">Decisions</button>
     <button id="btn-latency" title="Where a query's time actually goes">Latency</button>
     <a class="ghlink" href="lifecycle.html" title="Accessible text walk of the whole pipeline">Lifecycle</a>
-    <a class="ghlink" href="engine.html" title="Real Firebird compiled to WebAssembly — check the model against it">Real engine</a>
+    <a class="ghlink" href="machine/" title="Run SQL against the real Firebird engine and check the city against it">Machine room</a>
     <button id="btn-pause">⏸ Pause</button>
     <button id="btn-speed">1×</button>
     <button id="btn-theme">☀ Day</button>
@@ -145,7 +145,7 @@
   <span class="stat">delta <b id="st-delta"></b></span>
   <span class="stat">repl lag <b id="st-lag"></b> <span class="dim">(<b id="st-segs"></b> seg)</span></span>
   <span class="stat">model clock <b id="st-clock"></b></span>
-  <span class="stat version">v0.8.0</span>
+  <span class="stat version">v0.9.0</span>
 </footer>
 
 <div id="decide-dock" class="hidden">
@@ -268,6 +268,7 @@
 </div>
 
 <script src="js/data.js"></script>
+<script src="js/camera.js"></script>
 <script src="js/sim.js"></script>
 <script src="js/render.js"></script>
 <script src="js/ui.js"></script>

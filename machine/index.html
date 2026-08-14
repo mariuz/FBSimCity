@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Machine room — FBSimCity</title>
+<meta name="description" content="The real Firebird engine, compiled to WebAssembly and running in this page via Electric Firebird. Run SQL against it and check FBSimCity's claims against the engine itself.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
+<link rel="stylesheet" href="machine.css">
+<!--
+  Must run before anything that needs SharedArrayBuffer, and must be a
+  classic script: it reads document.currentScript to find its own URL.
+  See the note at the foot of the page for what it is doing and why.
+-->
+<script src="coi-serviceworker.js"></script>
+</head>
+<body>
+
+<header class="masthead">
+  <div>
+    <p class="kicker">Machine room 01</p>
+    <h1>Real Firebird. Not the model.</h1>
+    <p class="lead">
+      The rest of FBSimCity is a scaled model: it parses no SQL and runs no
+      Firebird code. This page is the other thing — the actual Firebird
+      embedded engine, compiled to WebAssembly by
+      <a href="https://github.com/mariuz/electric-firebird">Electric Firebird</a>
+      and running in a worker on this page. There is no server. Nothing you
+      type leaves your machine, and the database is kept in IndexedDB, so it
+      survives a reload.
+    </p>
+    <p class="lead">
+      It is here so the city can be checked rather than believed. Every
+      sequence below ends in a number you can compare with something the city
+      draws.
+    </p>
+  </div>
+  <div class="status" id="status" data-state="booting">
+    <span class="dot"></span>
+    <span id="status-text">Starting the engine…</span>
+  </div>
+</header>
+
+<p class="backlink">
+  <a href="../index.html">← the city</a> ·
+  <a href="../engine.html">what Electric Firebird is</a> ·
+  <a href="../lifecycle.html">lifecycle in text</a>
+</p>
+
+<!-- The engine's own markers, refreshed after every run. These are the same
+     three numbers the city's Transaction Hall draws. -->
+<section class="markers" id="markers" hidden>
+  <h2>What the engine says right now</h2>
+  <div class="marker-row">
+    <div class="marker"><span class="mk-label">Oldest interesting</span><span class="mk-val" id="mk-oit">—</span></div>
+    <div class="marker"><span class="mk-label">Oldest active</span><span class="mk-val" id="mk-oat">—</span></div>
+    <div class="marker"><span class="mk-label">Oldest snapshot</span><span class="mk-val" id="mk-ost">—</span></div>
+    <div class="marker"><span class="mk-label">Next transaction</span><span class="mk-val" id="mk-next">—</span></div>
+    <div class="marker"><span class="mk-label">Page size</span><span class="mk-val" id="mk-page">—</span></div>
+    <div class="marker"><span class="mk-label">Page buffers</span><span class="mk-val" id="mk-buf">—</span></div>
+  </div>
+  <p class="fine">
+    Read from <code>MON$DATABASE</code> after each statement you run. Watch
+    <b>next transaction</b> climb: every statement here gets its own
+    transaction, which is exactly what the Transaction Hall stamps.
+  </p>
+</section>
+
+<main>
+  <aside class="sequences">
+    <h2>Sequences</h2>
+    <p class="fine">
+      Each one is a short run of real statements. Click to load the whole
+      sequence into the workbench, or run a single step.
+    </p>
+    <ol id="sequence-list"></ol>
+  </aside>
+
+  <section class="bench">
+    <h2>Workbench</h2>
+    <label class="field-label" for="sql">SQL — <kbd>Ctrl</kbd>+<kbd>Enter</kbd> to run</label>
+    <textarea id="sql" spellcheck="false" rows="7"
+      placeholder="SELECT CURRENT_TRANSACTION FROM RDB$DATABASE"></textarea>
+    <div class="actions">
+      <button type="button" id="run" class="primary" disabled>Run</button>
+      <button type="button" id="reset" class="ghost">Delete the database</button>
+      <span class="timing" id="timing"></span>
+    </div>
+    <div class="result" id="result" aria-live="polite">
+      <p class="placeholder">Results appear here.</p>
+    </div>
+  </section>
+</main>
+
+<section class="wide">
+  <h2>Where the city and the engine meet</h2>
+  <p>
+    The left column is something FBSimCity draws. The right column is how you
+    settle it here. If a row ever disagrees, the city is wrong and the
+    <a href="https://github.com/mariuz/FBSimCity/issues">issue tracker</a> is
+    the place to say so.
+  </p>
+  <table class="map">
+    <thead>
+      <tr><th>In the city</th><th>Ask the engine</th></tr>
+    </thead>
+    <tbody id="map-body"></tbody>
+  </table>
+</section>
+
+<section class="wide">
+  <h2>What this runtime cannot show you</h2>
+  <p>
+    Stated plainly, because a page that runs the real engine invites the
+    assumption that everything on it is therefore real.
+  </p>
+  <ul class="limits">
+    <li><b>One attachment, one statement at a time.</b> The city's lock tower
+      draws writers queueing behind each other. There is no second session
+      here to queue behind, so no lock wait to watch — only the mechanism, in
+      the model.</li>
+    <li><b>No replication.</b> Firebird 4+ logical replication ships journal
+      segments to a replica database. There is no replica here, and no
+      <code>replication.conf</code>. The replication district stays a model.</li>
+    <li><b>No gbak, no nbackup.</b> Those are separate programs against a
+      database file. This engine's pages live in IndexedDB.</li>
+    <li><b>Sweep will not run while you watch.</b> The sweep interval is a
+      real setting and it is reported below, but a fresh database in a short
+      session never reaches it.</li>
+    <li><b>Timings are not a benchmark.</b> WebAssembly in a worker, over
+      IndexedDB, is not the shape of a server on a disk.</li>
+  </ul>
+</section>
+
+<footer>
+  <p id="isolation-note" class="fine"></p>
+  <p class="fine">
+    The engine is loaded from the Electric Firebird demo deployment, which
+    lives at the same origin as this page — that is what makes the embed
+    possible at all. It is a real dependency on another project's published
+    build: if that build moves, this page says so rather than failing
+    silently.
+  </p>
+  <p class="fine">
+    <code>coi-serviceworker.js</code> is vendored from the Electric Firebird
+    demo (originally by Guido Zuidhof, MIT). It supplies the
+    <code>COOP</code>/<code>COEP</code> headers GitHub Pages cannot send, which
+    is what allows <code>SharedArrayBuffer</code>, which is what the engine's
+    threads need.
+  </p>
+  <p class="fine">
+    FBSimCity is an independent educational project, not affiliated with or
+    endorsed by the Firebird Project. Firebird® is a registered trademark of
+    the Firebird Foundation Incorporated.
+  </p>
+</footer>
+
+<script type="module" src="machine.js"></script>
+</body>
+</html>
