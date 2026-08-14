@@ -4,7 +4,7 @@
 
 🔗 **Live: [mariuz.github.io/FBSimCity](https://mariuz.github.io/FBSimCity/)**
 
-![FBSimCity under cache thrash, with the latency panel showing where a query's time actually goes — parse and compile 48%, page cache 21%, disk reads 19%](docs/screenshot.png)
+![FBSimCity v0.9.0 under cache thrash: 16 page buffers against a hot set of 40, cache hit ratio down to 34%, and the latency panel showing where a query's time actually goes — parse and compile 47%, page cache 22%, disk reads 19%](docs/screenshot.png)
 
 FBSimCity is an interactive isometric city where every building is a real
 Firebird subsystem and every glowing particle is a query making its commute:
@@ -108,11 +108,12 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
 - Prefer text? **[The life of a query](https://mariuz.github.io/FBSimCity/lifecycle.html)**
   is the same journey as an accessible, keyboard-navigable page — no canvas,
   works with a screen reader.
-- **Want the real thing?** [The real engine](https://mariuz.github.io/FBSimCity/engine.html)
-  points at [Electric Firebird](https://github.com/mariuz/electric-firebird),
-  which compiles Firebird's embedded engine to WebAssembly the way PGlite does
-  for PostgreSQL. Run actual SQL against an actual engine in your browser and
-  check the city's claims against it — the page lists a few worth settling.
+- **Want the real thing?** The
+  [machine room](https://mariuz.github.io/FBSimCity/machine/) runs the actual
+  Firebird engine on the page — [Electric Firebird](https://github.com/mariuz/electric-firebird)
+  compiles it to WebAssembly the way PGlite does for PostgreSQL. Type SQL at
+  it, or run one of six guided sequences that each end in a number you can
+  hold against something the city draws.
 - **No mouse?** `Tab` and `Shift+Tab` step through every subsystem in pipeline
   order, opening each panel and announcing it to a screen reader.
 - Switch to the **daylight theme** (`D`), pause the world (`space`), or run

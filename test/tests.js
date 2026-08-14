@@ -188,11 +188,28 @@
 
   // ---- 2b. the version is stated in two places; they must agree --------
 
-  function testVersion(indexHtml) {
+  function testVersion(indexHtml, readme) {
     var m = indexHtml.match(/class="stat version">v([\d.]+)</);
     t.ok("index.html carries a version badge", !!m);
     if (m) {
       t.eq("FB.VERSION matches the version badge", FB.VERSION, m[1]);
+    }
+
+    /* The README screenshot is the first thing anyone sees, and it is the
+     * easiest thing in the repository to leave behind — it sits in a binary
+     * nothing can diff and no test can read. What can be checked is the alt
+     * text: it names the version it was taken at, so shipping a release
+     * without revisiting the image fails here. This exists because v0.9.0
+     * nearly shipped with a picture of a v0.6.1 city. */
+    var alt = readme.match(/!\[([^\]]*)\]\(docs\/screenshot\.png\)/);
+    t.ok("the README screenshot has alt text", !!alt);
+    if (alt) {
+      t.ok("the screenshot alt text names the current version",
+        alt[1].indexOf("v" + FB.VERSION) !== -1,
+        "alt text says " + JSON.stringify(alt[1].slice(0, 40)) +
+        "…, FB.VERSION is " + FB.VERSION);
+      t.ok("the screenshot alt text describes the image, not just the app",
+        alt[1].length > 60, "alt text is only " + alt[1].length + " characters");
     }
   }
 
@@ -990,7 +1007,7 @@
       testPurity(files[0]);
       testKnobs(files[1]);
       testLatency();
-      testVersion(files[4]);
+      testVersion(files[4], files[2]);
       testScenariosAndLinks(files[2]);
       testDeepLinks(files[2], files[1]);
       testBehaviour();
