@@ -123,19 +123,26 @@ const SEQUENCES = [
       const r = row(res[5]);
       if (!r) return null;
       const back = Number(r.BACKVERSION_READS);
+      // These counters are database-wide and cumulative — they include the
+      // catalogue's own bookkeeping from the CREATE, so the totals are much
+      // larger than the two updates just made. Say so, rather than letting
+      // the reader assume two updates produced all of them.
       return {
         ok: back > 0,
         text: back > 0
-          ? `${r.UPDATES} updates, and ${r.BACKVERSION_READS} back-version ` +
-            `reads: the engine had to walk past older versions of that row ` +
-            `to reach the current one, because the updates did not overwrite ` +
-            `anything. That walk is what the city's towers draw as floors, ` +
-            `and ${r.PURGES} purges is garbage collection removing the ones ` +
-            `nobody can reach any more.`
-          : `${r.UPDATES} updates and no back-version reads yet. The ` +
+          ? `Two updates to one row. The engine's counters — database-wide ` +
+            `and cumulative, so they include the catalogue's own writes — now ` +
+            `stand at ${r.UPDATES} updates, ${r.BACKVERSION_READS} ` +
+            `back-version reads and ${r.PURGES} purges. The figure that ` +
+            `settles it is the back-version reads: above zero means the ` +
+            `engine had to walk past an older version of a row to reach the ` +
+            `current one, because an update did not overwrite anything. That ` +
+            `walk is what the city's towers draw as floors, and a purge is ` +
+            `garbage collection removing a version nobody can reach.`
+          : `${r.UPDATES} updates recorded and no back-version reads. The ` +
             `versions are written either way; whether the engine had to read ` +
-            `past one depends on what garbage collection did first. Run the ` +
-            `sequence again — the counter is database-wide and cumulative.`,
+            `past one depends on what garbage collection got to first. Run ` +
+            `the sequence again.`,
       };
     },
   },
@@ -471,10 +478,26 @@ async function boot() {
   reportIsolation();
 
   if (!self.crossOriginIsolated) {
-    fail('Waiting for cross-origin isolation. The engine needs ' +
-         'SharedArrayBuffer, which the browser only grants to an isolated ' +
-         'page. If the page does not reload itself shortly, see the note at ' +
-         'the foot of this page.');
+    // First visit: the service worker has just installed and has not taken
+    // control yet, so it will reload the page in a moment and the engine will
+    // start on the way back. That is the normal path, not a failure, and
+    // calling it "unavailable" would be alarming and wrong. Once a controller
+    // exists and the page is still not isolated, something really is wrong.
+    const firstVisit = 'serviceWorker' in navigator &&
+      !navigator.serviceWorker.controller;
+    if (firstVisit) {
+      setStatus('busy', 'Preparing the engine…');
+      els.result.replaceChildren();
+      els.result.append(el('p', 'note',
+        'First visit: the page is installing the service worker that supplies ' +
+        'the cross-origin isolation headers GitHub Pages cannot send, and will ' +
+        'reload itself once. The engine starts on the way back.'));
+      return;
+    }
+    fail('This page is not cross-origin isolated, so SharedArrayBuffer is ' +
+         'not available and the engine cannot start. That usually means the ' +
+         'page is being served over plain HTTP or from a file:// URL, where ' +
+         'service workers do not run.');
     return;
   }
 
