@@ -129,6 +129,10 @@
       session never reaches it.</li>
     <li><b>Timings are not a benchmark.</b> WebAssembly in a worker, over
       IndexedDB, is not the shape of a server on a disk.</li>
+    <li><b>Headless browsers do not run it.</b> Measured with headless Edge:
+      the page reaches cross-origin isolation, and then the engine worker
+      fails to start. If you are automating against this page, that is why —
+      the city itself screenshots fine.</li>
   </ul>
 </section>
 
