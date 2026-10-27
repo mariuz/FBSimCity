@@ -1252,6 +1252,24 @@
     t.eq("traceNext advances traced query to yvalve", trSim.traceStage, "yvalve");
     Sim.tracePrev(trSim);
     t.eq("tracePrev steps traced query back to harbor", trSim.traceStage, "harbor");
+
+    // Expandable time-series telemetry drawer & synchronized hover readouts:
+    var telemDrawer = document.getElementById("telemetry-drawer");
+    var telemCanvas = document.getElementById("telemetry-canvas");
+    var telemReadout = document.getElementById("telemetry-readout");
+    t.ok("time-series #telemetry-drawer, #telemetry-canvas, and #telemetry-readout exist",
+      !!telemDrawer && !!telemCanvas && !!telemReadout);
+    var firstStat = document.querySelector("#stats .stat");
+    firstStat.click();
+    t.ok("clicking a metric in #stats expands #telemetry-drawer",
+      !telemDrawer.classList.contains("hidden"));
+    var th = UI.getTelemetryHistory();
+    t.ok("telemetry history records synchronized QPS, hit %, OST-OIT gap, versions, and p50/p95 latency",
+      th && th.t.length > 0 && th.qps.length === th.t.length &&
+      th.gap.length === th.t.length && th.p95.length === th.t.length);
+    t.ok("telemetry readout displays synchronized metrics from the model",
+      (telemReadout.textContent || "").indexOf("OST−OIT") !== -1);
+    document.getElementById("telemetry-close").click();
   }
 
   // ---- 8d. the throughput readout is not an estimate -------------------

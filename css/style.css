@@ -228,7 +228,7 @@ body.day #inspector-toggle:hover { color: #141c36; }
 #info-body p { margin-bottom: 9px; }
 #info-body a { color: #74c0fc; }
 #info-body .fine { font-size: 11px; color: #8b97c4; }
-#info-close, #tour-close, #trace-end {
+#info-close, #tour-close, #trace-end, #telemetry-close {
   position: absolute;
   top: 6px; right: 8px;
   background: none;
@@ -237,7 +237,43 @@ body.day #inspector-toggle:hover { color: #141c36; }
   color: #8b97c4;
   padding: 2px 6px;
 }
-#info-close:hover, #tour-close:hover, #trace-end:hover { color: #fff; background: none; }
+#info-close:hover, #tour-close:hover, #trace-end:hover, #telemetry-close:hover { color: #fff; background: none; }
+
+/* ---- telemetry drawer ---- */
+#telemetry-drawer {
+  position: fixed;
+  left: 50%;
+  bottom: 42px;
+  transform: translateX(-50%);
+  width: min(792px, calc(100vw - 24px));
+  background: rgba(14,18,34,0.95);
+  border: 1px solid rgba(120,140,210,0.35);
+  border-radius: 12px;
+  padding: 10px 14px 12px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.55);
+  backdrop-filter: blur(6px);
+  z-index: 13;
+}
+#telemetry-drawer h3 { font-size: 13.5px; color: #74c0fc; }
+#telemetry-readout {
+  font-size: 11.5px;
+  color: #b9c4ec;
+  font-variant-numeric: tabular-nums;
+  margin-left: 8px;
+}
+#telemetry-canvas {
+  display: block;
+  width: 100%;
+  height: 148px;
+  margin-top: 6px;
+  cursor: crosshair;
+}
+body.day #telemetry-drawer {
+  background: rgba(252,253,255,0.96);
+  border-color: rgba(90,110,180,0.4);
+}
+body.day #telemetry-drawer h3 { color: #1971c2; }
+body.day #telemetry-readout { color: #33406b; }
 
 /* ---- stats bar ---- */
 #stats {
@@ -253,6 +289,8 @@ body.day #inspector-toggle:hover { color: #141c36; }
   z-index: 10;
   pointer-events: none;
 }
+#stats .stat { pointer-events: auto; cursor: pointer; }
+#stats .stat.version { cursor: default; }
 #stats b { color: #e8edff; font-weight: 600; }
 #stats .good { color: #69db7c; }
 #stats .warn { color: #ffd43b; }

@@ -222,15 +222,24 @@
   </div>
 </aside>
 
+<div id="telemetry-drawer" class="hidden" aria-label="Time-series telemetry drawer">
+  <div class="tour-head">
+    <h3>Telemetry history (3m window)</h3>
+    <span id="telemetry-readout" class="fine">Click any metric below or hover chart to inspect</span>
+    <button id="telemetry-close" aria-label="Close telemetry drawer">×</button>
+  </div>
+  <canvas id="telemetry-canvas" width="760" height="148"></canvas>
+</div>
+
 <footer id="stats" aria-live="off">
-  <span class="stat"><b id="st-qps"></b> queries/s <canvas id="sp-qps" width="64" height="18"></canvas></span>
-  <span class="stat">cache hit <b id="st-hit"></b> <canvas id="sp-hit" width="64" height="18"></canvas></span>
+  <span class="stat" title="Click to toggle 3-minute telemetry drawer"><b id="st-qps"></b> queries/s <canvas id="sp-qps" width="64" height="18"></canvas></span>
+  <span class="stat" title="Click to toggle 3-minute telemetry drawer">cache hit <b id="st-hit"></b> <canvas id="sp-hit" width="64" height="18"></canvas></span>
   <span class="stat">evictions <b id="st-evict"></b> <span class="dim">(dirty <b id="st-dirty"></b>)</span></span>
   <span class="stat">Next <b id="st-next"></b></span>
   <span class="stat">OAT <b id="st-oat"></b></span>
   <span class="stat">OST <b id="st-ost"></b></span>
   <span class="stat">OIT <b id="st-oit"></b> <span id="st-pin" class="bad"></span></span>
-  <span class="stat">stale versions <b id="st-vers"></b> <span class="dim">(walks <b id="st-bvreads"></b>)</span> <canvas id="sp-vers" width="64" height="18"></canvas></span>
+  <span class="stat" title="Click to toggle 3-minute telemetry drawer">stale versions <b id="st-vers"></b> <span class="dim">(walks <b id="st-bvreads"></b>)</span> <canvas id="sp-vers" width="64" height="18"></canvas></span>
   <span class="stat">lock waits <b id="st-locks"></b></span>
   <span class="stat">rollbacks <b id="st-rb"></b></span>
   <span class="stat">backup <b id="st-backup"></b></span>

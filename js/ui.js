@@ -7,8 +7,20 @@ var UI = (function () {
   var tourIdx = -1;
   var onFocus = null; // callback(buildingId, zoom)
   var simRef = null;
-  var hist = { qps: [], hit: [], vers: [] };
+  var hist = { t: [], qps: [], hit: [], gap: [], vers: [], p50: [], p95: [], events: [] };
   var lastHistPush = -1;
+  var prevSweepActive = false;
+  var telemHoverIdx = -1;
+
+  function recordTelemetryEvent(label, color) {
+    if (!simRef) return;
+    hist.events.push({
+      t: Math.floor(simRef.time),
+      label: label,
+      color: color || "#74c0fc"
+    });
+    if (hist.events.length > 24) hist.events.shift();
+  }
 
   function $(id) { return document.getElementById(id); }
 
@@ -145,6 +157,7 @@ var UI = (function () {
     if (sc.run) sc.run(simRef);
     simRef.log.push({ t: simRef.time, msg: sc.msg });
     if (simRef.log.length > 6) simRef.log.shift();
+    recordTelemetryEvent(sc.label, "#74c0fc");
     if (onFocus && !noFly) onFocus(sc.focus, sc.zoom);
   }
 
@@ -172,6 +185,10 @@ var UI = (function () {
   function init(sim, focusCb) {
     simRef = sim;
     onFocus = focusCb;
+    hist = { t: [], qps: [], hit: [], gap: [], vers: [], p50: [], p95: [], events: [] };
+    lastHistPush = -1;
+    prevSweepActive = false;
+    telemHoverIdx = -1;
     els.info = $("info-panel");
     els.infoBody = $("info-body");
     els.infoTitle = $("info-title");
@@ -242,6 +259,7 @@ var UI = (function () {
     });
     $("btn-sweep").addEventListener("click", function () {
       Sim.startSweep(sim, true);
+      recordTelemetryEvent("Sweep", "#ffa94d");
     });
     $("btn-gbak").addEventListener("click", function () { Sim.startGbak(sim); });
     $("btn-nb0").addEventListener("click", function () { Sim.startNbackup(sim, 0); });
@@ -374,6 +392,42 @@ var UI = (function () {
     $("help-close").addEventListener("click", function () { toggleOverlay("help-overlay", false); });
     $("btn-anatomy").addEventListener("click", function () { toggleOverlay("anatomy-overlay"); });
     $("anatomy-close").addEventListener("click", function () { toggleOverlay("anatomy-overlay", false); });
+
+    // expandable time-series telemetry drawer (#telemetry-drawer)
+    var telemDrawer = $("telemetry-drawer");
+    var telemClose = $("telemetry-close");
+    var telemCanvas = $("telemetry-canvas");
+    if (telemClose && telemDrawer) {
+      telemClose.addEventListener("click", function () {
+        telemDrawer.classList.add("hidden");
+      });
+    }
+    var statsBar = $("stats");
+    if (statsBar && telemDrawer) {
+      statsBar.querySelectorAll(".stat").forEach(function (stEl) {
+        if (stEl.classList.contains("version")) return;
+        stEl.addEventListener("click", function () {
+          telemDrawer.classList.toggle("hidden");
+          renderTelemetryDrawer();
+        });
+      });
+    }
+    if (telemCanvas) {
+      telemCanvas.addEventListener("mousemove", function (ev) {
+        if (!hist.t.length) return;
+        var r = telemCanvas.getBoundingClientRect();
+        var relX = (ev.clientX - r.left) / Math.max(1, r.width) * telemCanvas.width;
+        var padL = 94, padR = 12;
+        var plotW = telemCanvas.width - padL - padR;
+        var frac = Math.max(0, Math.min(1, (relX - padL) / Math.max(1, plotW)));
+        telemHoverIdx = Math.round(frac * Math.max(0, hist.t.length - 1));
+        renderTelemetryDrawer();
+      });
+      telemCanvas.addEventListener("mouseleave", function () {
+        telemHoverIdx = -1;
+        renderTelemetryDrawer();
+      });
+    }
 
     // collapsible control room — the city gets the screen back
     var ctrl = $("controls");
@@ -624,7 +678,9 @@ var UI = (function () {
     });
     body.querySelectorAll("[data-choice]").forEach(function (b) {
       b.addEventListener("click", function () {
-        Sim.answerChallenge(simRef, b.getAttribute("data-choice"));
+        var ch = b.getAttribute("data-choice");
+        Sim.answerChallenge(simRef, ch);
+        recordTelemetryEvent("Decision: " + ch, "#fcc419");
         renderDecisions();
       });
     });
@@ -1142,17 +1198,134 @@ var UI = (function () {
     return false;
   }
 
-  // ---- stats + sparklines ----------------------------------------------
+  // ---- stats + sparklines + telemetry drawer ---------------------------
 
   function pushHist(s) {
     if (Math.floor(s.time) === lastHistPush) return;
     lastHistPush = Math.floor(s.time);
+    var lp = Sim.latencyProfile(s);
+    hist.t.push(lastHistPush);
     hist.qps.push(s.qps);
     hist.hit.push(s.hitRatio);
+    hist.gap.push(Math.max(0, s.ost - s.oit));
     hist.vers.push(s.totalVersions);
-    ["qps", "hit", "vers"].forEach(function (k) {
-      if (hist[k].length > 60) hist[k].shift();
+    hist.p50.push(lp ? lp.p50 : 0);
+    hist.p95.push(lp ? lp.p95 : 0);
+    if (s.sweepActive && !prevSweepActive) {
+      recordTelemetryEvent("Sweep", "#ffa94d");
+    }
+    prevSweepActive = !!s.sweepActive;
+    ["t", "qps", "hit", "gap", "vers", "p50", "p95"].forEach(function (k) {
+      if (hist[k].length > 180) hist[k].shift();
     });
+    if (hist.t.length) {
+      var minT = hist.t[0];
+      hist.events = hist.events.filter(function (ev) { return ev.t >= minT; });
+    }
+  }
+
+  function renderTelemetryDrawer() {
+    var drawer = $("telemetry-drawer");
+    if (!drawer || drawer.classList.contains("hidden")) return;
+    var c = $("telemetry-canvas");
+    var readout = $("telemetry-readout");
+    if (!c) return;
+    var ctx = c.getContext("2d");
+    var w = c.width, h = c.height;
+    ctx.clearRect(0, 0, w, h);
+    var n = hist.t.length;
+    if (n < 1) return;
+
+    var padL = 94, padR = 12, padT = 14, padB = 6;
+    var plotW = w - padL - padR;
+    var lanes = [
+      { key: "qps", label: "QPS", color: "#4dabf7", arr: hist.qps, fmt: function (v) { return v.toFixed(1); } },
+      { key: "hit", label: "Cache hit %", color: "#69db7c", arr: hist.hit, max: 1, fmt: function (v) { return (v * 100).toFixed(0) + "%"; } },
+      { key: "gap", label: "OST − OIT", color: "#fcc419", arr: hist.gap, fmt: function (v) { return String(Math.round(v)); } },
+      { key: "vers", label: "Stale vers", color: "#ff8787", arr: hist.vers, fmt: function (v) { return String(Math.round(v)); } },
+      { key: "lat", label: "p50 / p95 (s)", color: "#c084fc", arr: hist.p50, arr2: hist.p95, color2: "#f783ac", fmt: function (v, i) { return v.toFixed(2) + "/" + hist.p95[i].toFixed(2) + "s"; } }
+    ];
+    var laneH = (h - padT - padB) / lanes.length;
+    var isDay = document.body.classList.contains("day");
+
+    for (var li = 0; li < lanes.length; li++) {
+      var ln = lanes[li];
+      var y0 = padT + li * laneH;
+      var y1 = y0 + laneH - 4;
+      ctx.fillStyle = isDay ? "rgba(210,220,245,0.35)" : "rgba(30,38,70,0.45)";
+      ctx.fillRect(padL, y0, plotW, laneH - 4);
+      ctx.fillStyle = ln.color;
+      ctx.font = "600 10.5px 'Segoe UI', sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(ln.label, 4, y0 + laneH * 0.62);
+
+      var maxV = ln.max || Math.max.apply(null, ln.arr2 ? ln.arr.concat(ln.arr2) : ln.arr);
+      if (maxV <= 0) maxV = 1;
+      if (n >= 2) {
+        ctx.strokeStyle = ln.color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (var i = 0; i < n; i++) {
+          var px = padL + (i / (n - 1)) * plotW;
+          var py = y1 - 2 - (ln.arr[i] / maxV) * (laneH - 8);
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        if (ln.arr2) {
+          ctx.strokeStyle = ln.color2;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          for (var j = 0; j < n; j++) {
+            var px2 = padL + (j / (n - 1)) * plotW;
+            var py2 = y1 - 2 - (ln.arr2[j] / maxV) * (laneH - 8);
+            if (j === 0) ctx.moveTo(px2, py2); else ctx.lineTo(px2, py2);
+          }
+          ctx.stroke();
+        }
+      }
+    }
+
+    // Event vertical markers (scenario changes, sweeps, operator decisions)
+    if (n >= 2 && hist.events.length) {
+      var t0 = hist.t[0], tSpan = Math.max(1, hist.t[n - 1] - t0);
+      ctx.save();
+      ctx.setLineDash([3, 3]);
+      for (var ei = 0; ei < hist.events.length; ei++) {
+        var ev = hist.events[ei];
+        var ex = padL + Math.max(0, Math.min(1, (ev.t - t0) / tSpan)) * plotW;
+        ctx.strokeStyle = ev.color;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(ex, padT - 2);
+        ctx.lineTo(ex, h - padB);
+        ctx.stroke();
+        ctx.fillStyle = ev.color;
+        ctx.font = "600 9.5px 'Segoe UI', sans-serif";
+        ctx.fillText(ev.label.slice(0, 18), Math.min(w - 90, ex + 3), 10);
+      }
+      ctx.restore();
+    }
+
+    var idx = (telemHoverIdx >= 0 && telemHoverIdx < n) ? telemHoverIdx : (n - 1);
+    if (telemHoverIdx >= 0 && n >= 2) {
+      var hx = padL + (idx / (n - 1)) * plotW;
+      ctx.strokeStyle = isDay ? "rgba(20,28,54,0.65)" : "rgba(255,255,255,0.65)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(hx, padT);
+      ctx.lineTo(hx, h - padB);
+      ctx.stroke();
+    }
+    if (readout) {
+      var ts = hist.t[idx];
+      var mm = Math.floor(ts / 60), ss = ts % 60;
+      readout.textContent = "t=" + mm + ":" + (ss < 10 ? "0" : "") + ss +
+        " · " + hist.qps[idx].toFixed(1) + " q/s" +
+        " · hit " + (hist.hit[idx] * 100).toFixed(0) + "%" +
+        " · OST−OIT " + hist.gap[idx] +
+        " · " + hist.vers[idx] + " vers" +
+        " · p50 " + hist.p50[idx].toFixed(2) + "s / p95 " + hist.p95[idx].toFixed(2) + "s";
+    }
   }
 
   function spark(id, arr, color, fixedMax) {
@@ -1241,9 +1414,10 @@ var UI = (function () {
     $("st-clock").textContent = mm + ":" + (ss < 10 ? "0" : "") + ss +
       (s.speed !== 1 ? " @" + s.speed + "×" : "") + (s.paused ? " ⏸" : "");
 
-    spark("sp-qps", hist.qps, "#4dabf7");
-    spark("sp-hit", hist.hit, "#69db7c", 1);
-    spark("sp-vers", hist.vers, "#ff8787");
+    spark("sp-qps", hist.qps.slice(-60), "#4dabf7");
+    spark("sp-hit", hist.hit.slice(-60), "#69db7c", 1);
+    spark("sp-vers", hist.vers.slice(-60), "#ff8787");
+    renderTelemetryDrawer();
 
     var html = "";
     for (var i = s.log.length - 1; i >= 0; i--) {
@@ -1289,6 +1463,7 @@ var UI = (function () {
     showBuilding: showBuilding,
     updateStats: updateStats,
     handleKey: handleKey,
-    announce: announce
+    announce: announce,
+    getTelemetryHistory: function () { return hist; }
   };
 })();

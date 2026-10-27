@@ -265,7 +265,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
     `#trace-bar` so learners can freeze the city at each stage of a query's life
     and click directly into that building's C++ source references.
 
-### 18. Expandable time-series telemetry drawer & hover readouts
+### 18. [x] Expandable time-series telemetry drawer & hover readouts *(Completed)*
 - **Today in `ui.js`:** The bottom `#stats` bar draws three `64×18` px
   sparklines (`#sp-qps`, `#sp-hit`, `#sp-vers`) with no axis labels, hover
   values, or correlation view.
