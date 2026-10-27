@@ -562,6 +562,38 @@ var Render = (function () {
   }
 
   // ---------------------------------------------------------------------
+  // Isometric interval / topological depth comparator:
+  // Ordering by a scalar (x + w + y + d) clips road particles behind elongated
+  // building facades when a particle has x >= box.xMax (in front along X)
+  // yet q.x + q.y < box.xMax + box.yMax. Comparing [xMin, xMax] and [yMin, yMax]
+  // intervals orders non-overlapping footprints along the separating axis first.
+  function boundsOf(d) {
+    if (d.xMin !== undefined) return d;
+    if (d.type === "particle") {
+      var q = d.q;
+      d.xMin = q.x - 0.05; d.xMax = q.x + 0.05;
+      d.yMin = q.y - 0.05; d.yMax = q.y + 0.05;
+    } else {
+      d.xMin = d.x; d.xMax = d.x + d.w;
+      d.yMin = d.y; d.yMax = d.y + d.d;
+    }
+    return d;
+  }
+
+  function isoCompare(a, b) {
+    boundsOf(a); boundsOf(b);
+    var aBehindX = a.xMax <= b.xMin;
+    var bBehindX = b.xMax <= a.xMin;
+    var aBehindY = a.yMax <= b.yMin;
+    var bBehindY = b.yMax <= a.yMin;
+    if (aBehindX && !bBehindY) return -1;
+    if (bBehindX && !aBehindY) return 1;
+    if (aBehindY && !bBehindX) return -1;
+    if (bBehindY && !aBehindX) return 1;
+    var ka = (a.xMax + a.yMax) + (a.type === "particle" ? 0.2 : 0);
+    var kb = (b.xMax + b.yMax) + (b.type === "particle" ? 0.2 : 0);
+    return ka - kb;
+  }
 
   function collectDrawables(s, hoverId, selectedId, time) {
     var list = [];
@@ -585,11 +617,11 @@ var Render = (function () {
       if (b.id === "replicator" && s.repl.disabled) {
         glow = Math.max(glow, pulse(time, 6));
       }
-      list.push({
+      list.push(boundsOf({
         key: b.x + b.w + b.y + b.d, type: "box",
         x: b.x, y: b.y, w: b.w, d: b.d, h: b.h, color: b.color,
         glow: glow, b: b
-      });
+      }));
     });
     // MVCC towers
     var m = FB.byId.mvcc;
@@ -604,12 +636,12 @@ var Render = (function () {
             (selectedId === "mvcc" && (selectedTower === i || selectedTower === null))) {
           tGlow = 1;
         }
-        list.push({
+        list.push(boundsOf({
           key: tx + 1.3 + ty + 1.3, type: "box",
           x: tx, y: ty, w: 1.3, d: 1.3, h: h,
           color: towerColor(t.versions),
           glow: tGlow, b: m, mvcc: true, towerIdx: i, table: t
-        });
+        }));
       }
     }
     // sweep truck
@@ -625,17 +657,28 @@ var Render = (function () {
         tx2 = m.x + 1 + (m.w - 2) * (0.5 + 0.5 * Math.sin(q * Math.PI * 4));
         ty2 = m.y + 1 + (m.d - 2) * Math.min(1, q);
       }
-      list.push({
+      list.push(boundsOf({
         key: tx2 + ty2 + 0.8, type: "box",
         x: tx2, y: ty2, w: 0.9, d: 0.6, h: 0.55,
         color: "#e8590c", glow: 0.8, b: null
-      });
+      }));
     }
     // particles
     s.particles.forEach(function (q) {
-      list.push({ key: q.x + q.y + 0.01, type: "particle", q: q });
+      list.push(boundsOf({ key: q.x + q.y + 0.01, type: "particle", q: q }));
     });
     list.sort(function (a, b2) { return a.key - b2.key; });
+    // Topological insertion pass: ensure any drawable strictly in front of an
+    // elongated box along X or Y is ordered after that box.
+    for (var ti = 1; ti < list.length; ti++) {
+      var cur = list[ti];
+      var tj = ti - 1;
+      while (tj >= 0 && isoCompare(list[tj], cur) > 0) {
+        list[tj + 1] = list[tj];
+        tj--;
+      }
+      list[tj + 1] = cur;
+    }
     return list;
   }
 
@@ -643,17 +686,70 @@ var Render = (function () {
     sql: "#22d3ee", blr: "#c084fc", result: "#4ade80", rollback: "#f87171"
   };
 
+  // Redundant shape encoding for accessibility alongside phase colour:
+  // - rollback: "xburst" (X-cross + central dot)
+  // - update:   "diamond" (rotated square)
+  // - select:   "circle" (disc)
+  function particleShape(q) {
+    if (q && q.phase === "rollback") return "xburst";
+    if (q && q.kind === "update") return "diamond";
+    return "circle";
+  }
+
   function drawParticle(ctx, cam, q, time) {
     var color = PHASE_COLORS[q.phase] || "#22d3ee";
     var p = proj(cam, q.x, q.y, 0.35);
     var r = (q.kind === "update" ? 4.4 : 3.4) * cam.zoom;
+    var shape = particleShape(q);
     ctx.save();
+    // Motion trail (suppressed when prefers-reduced-motion / calm is active)
+    if (!calm && q.trail && q.trail.length > 0) {
+      ctx.strokeStyle = color;
+      ctx.lineCap = "round";
+      var prevPt = p;
+      for (var ti = q.trail.length - 1; ti >= 0; ti--) {
+        var tp = proj(cam, q.trail[ti].x, q.trail[ti].y, 0.35);
+        var frac = (ti + 1) / (q.trail.length + 1);
+        ctx.globalAlpha = 0.34 * frac;
+        ctx.lineWidth = Math.max(1, r * 0.85 * frac);
+        ctx.beginPath();
+        ctx.moveTo(prevPt[0], prevPt[1]);
+        ctx.lineTo(tp[0], tp[1]);
+        ctx.stroke();
+        prevPt = tp;
+      }
+      ctx.globalAlpha = 1;
+    }
     ctx.shadowColor = color;
     ctx.shadowBlur = 10 * cam.zoom;
     ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.strokeStyle = color;
+    if (shape === "diamond") {
+      var d = r * 1.25;
+      ctx.beginPath();
+      ctx.moveTo(p[0], p[1] - d);
+      ctx.lineTo(p[0] + d, p[1]);
+      ctx.lineTo(p[0], p[1] + d);
+      ctx.lineTo(p[0] - d, p[1]);
+      ctx.closePath();
+      ctx.fill();
+    } else if (shape === "xburst") {
+      var xb = r * 1.25;
+      ctx.lineWidth = Math.max(1.6, 2.2 * cam.zoom);
+      ctx.beginPath();
+      ctx.moveTo(p[0] - xb, p[1] - xb);
+      ctx.lineTo(p[0] + xb, p[1] + xb);
+      ctx.moveTo(p[0] + xb, p[1] - xb);
+      ctx.lineTo(p[0] - xb, p[1] + xb);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], r * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
+      ctx.fill();
+    }
     if (q.waiting) {
       ctx.strokeStyle = "#ff6b6b";
       ctx.lineWidth = 2;
@@ -968,6 +1064,7 @@ var Render = (function () {
     draw: draw, pick: pick, pickTower: pickTower,
     pointInPoly: pointInPoly, hitBox: hitBox,
     slabColor: slabColor,
+    particleShape: particleShape, isoCompare: isoCompare,
     getHoveredTower: function () { return hoveredTower; },
     setSelectedTower: function (idx) { selectedTower = idx; },
     proj: proj,

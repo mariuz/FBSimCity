@@ -691,6 +691,7 @@ var Sim = (function () {
       traced: !!traced,
       waiting: false,
       dead: false,
+      trail: [],
       lat: newLat(),
       latBucket: "travel"
     };
@@ -1000,6 +1001,13 @@ var Sim = (function () {
       var dx = step.x - q.x, dy = step.y - q.y;
       var dist = Math.sqrt(dx * dx + dy * dy);
       var move = q.speed * dt;
+      if (q.trail) {
+        var lastT = q.trail.length ? q.trail[q.trail.length - 1] : null;
+        if (!lastT || ((q.x - lastT.x) * (q.x - lastT.x) + (q.y - lastT.y) * (q.y - lastT.y)) >= 0.03) {
+          q.trail.push({ x: q.x, y: q.y });
+          if (q.trail.length > 5) q.trail.shift();
+        }
+      }
       if (dist <= move || dist < 0.001) {
         q.x = step.x; q.y = step.y;
         q.dwell = step.dwell;
@@ -1786,6 +1794,7 @@ var Sim = (function () {
       traced: false,
       waiting: false,
       dead: false,
+      trail: [],
       lat: newLat(),
       latBucket: "travel"
     };

@@ -1128,6 +1128,26 @@
       microSim.btrLeaf >= 0 && microSim.btrLeaf < 4);
     t.ok("Sort Yard run counter stays bounded",
       microSim.sortRuns >= 0 && microSim.sortRuns <= 8);
+
+    // Particle shape encoding, motion trails, and topological depth sorting:
+    t.eq("SELECT particle uses circle shape",
+      Render.particleShape({ kind: "select", phase: "sql" }), "circle");
+    t.eq("UPDATE particle uses diamond shape",
+      Render.particleShape({ kind: "update", phase: "blr" }), "diamond");
+    t.eq("rolled-back particle uses xburst shape",
+      Render.particleShape({ kind: "update", phase: "rollback" }), "xburst");
+    var hasTrail = microSim.particles.some(function (q) {
+      return Array.isArray(q.trail) && q.trail.length > 0 && q.trail.length <= 5;
+    });
+    t.ok("moving particles record bounded motion trails", hasTrail);
+    // Elongated building at x:[1,7], y:[12.5,16.3] (key = 23.3) vs road particle
+    // at x:7.4, y:13.0 (key = 20.41): isoCompare orders the building behind (-1)
+    // the particle even though the building's scalar xMax+yMax is larger.
+    var longBox = { type: "box", x: 1, y: 12.5, w: 6, d: 3.8 };
+    var roadParticle = { type: "particle", q: { x: 7.4, y: 13.0 } };
+    t.ok("isoCompare orders an elongated building behind a road particle in front of its X facade",
+      Render.isoCompare(longBox, roadParticle) < 0 &&
+      Render.isoCompare(roadParticle, longBox) > 0);
   }
 
   // ---- 8c. the readouts agree with the model ---------------------------

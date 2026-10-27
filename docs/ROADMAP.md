@@ -219,7 +219,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
     pin icon on buffers currently held by an active cursor, and brief precedence
     arcs between dirty slots when `flushDirty` writes ordered pages to `pio`.
 
-### 15. Particle motion trails, shape encoding, and topological depth sorting
+### 15. [x] Particle motion trails, shape encoding, and topological depth sorting *(Completed)*
 - **Today in `render.js`:**
   - Queries are plain circles distinguished only by fill colour (`SELECT` blue,
     `UPDATE` orange, `ROLLBACK` red), which is harder to distinguish under
