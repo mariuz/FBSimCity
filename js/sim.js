@@ -1441,7 +1441,10 @@ var Sim = (function () {
     return {
       time: s.time, versions: s.totalVersions, oit: s.oit,
       pageWrites: s.pageWrites, delta: s.backup.deltaPages,
-      hitRatio: s.hitRatio, dirty: s.dirtyEvictions
+      hitRatio: s.hitRatio, dirty: s.dirtyEvictions,
+      indexScans: s.indexScans, naturalScans: s.naturalScans,
+      sorts: s.sorts, sortSpills: s.sortSpills,
+      astCount: s.astCount, evictions: s.evictions
     };
   }
 
@@ -1471,6 +1474,21 @@ var Sim = (function () {
       setReplMode(s, "async");
       setReplHealth(s, "down");
       for (var m = 0; m < 45 * 60; m++) tick(s, 1 / 60);
+    } else if (id === "stalestats") {
+      s.queryRate = 12; s.updateRatio = 0.15;
+      setLongTxn(s, false);
+      degradeStatistics(s);
+      for (var st = 0; st < 20 * 60; st++) tick(s, 1 / 60);
+    } else if (id === "sortspill") {
+      s.queryRate = 12; s.updateRatio = 0.1;
+      s.tempCacheLimit = 8;
+      degradeStatistics(s);
+      for (var sp = 0; sp < 20 * 60; sp++) tick(s, 1 / 60);
+    } else if (id === "classiccache") {
+      s.queryRate = 12; s.updateRatio = 0.45;
+      setCacheSize(s, 64);
+      setServerMode(s, "classic");
+      for (var cc = 0; cc < 25 * 60; cc++) tick(s, 1 / 60);
     }
 
     s.challenge = { id: id, at: s.time, snap: snapshot(s) };
@@ -1577,6 +1595,67 @@ var Sim = (function () {
         lines.push("Cost: you avoided merge I/O and bet the volume's free " +
           "space instead. That bet gets worse the longer the lock is held, " +
           "and the merge you deferred did not get smaller.");
+      }
+    } else if (id === "stalestats") {
+      if (choice === "recompute") {
+        recomputeStatistics(s);
+        runFor(s, 20);
+        lines.push("SET STATISTICS INDEX completed across all 12 tables.");
+        lines.push("In the next 20 seconds the optimizer chose " +
+          (s.indexScans - before.indexScans) + " B-Tree index scans and only " +
+          (s.naturalScans - before.naturalScans) + " natural+sort plans.");
+        lines.push("Cost: a brief catalog update and index tree walk — paid " +
+          "back immediately by taking selective queries out of the Sort Yard.");
+      } else {
+        runFor(s, 20);
+        lines.push("You deferred SET STATISTICS. Every table's selectivity " +
+          "stayed drifted above the optimizer threshold.");
+        lines.push("Over the next 20 seconds queries ran " +
+          (s.naturalScans - before.naturalScans) + " natural+sort plans and " +
+          (s.indexScans - before.indexScans) + " index scans.");
+        lines.push("Cost: no metadata lock now, but every selective SELECT " +
+          "kept scanning pages and sorting unnecessarily.");
+      }
+    } else if (id === "sortspill") {
+      if (choice === "raise") {
+        s.tempCacheLimit = 96;
+        runFor(s, 20);
+        var sortsDone = s.sorts - before.sorts;
+        var spillsDone = s.sortSpills - before.sortSpills;
+        lines.push("TempCacheLimit raised to 96 units.");
+        lines.push("Over the next 20 seconds " + sortsDone + " sorts ran and " +
+          spillsDone + " spilled to disk.");
+        lines.push("Cost: higher RAM budget per concurrent sort, trading " +
+          "memory for eliminating temporary-file disk I/O.");
+      } else {
+        runFor(s, 20);
+        var sortsKept = s.sorts - before.sorts;
+        var spillsKept = s.sortSpills - before.sortSpills;
+        lines.push("TempCacheLimit stayed at 8 units.");
+        lines.push("Over the next 20 seconds " + spillsKept + " of " +
+          sortsKept + " sorts spilled temporary runs to disk.");
+        lines.push("Cost: RAM stayed capped, and the Sort Yard kept " +
+          "converting memory pressure into disk I/O.");
+      }
+    } else if (id === "classiccache") {
+      if (choice === "superserver") {
+        setServerMode(s, "super");
+        runFor(s, 25);
+        lines.push("Switched to SuperServer. All 64 buffers now form one " +
+          "shared Page Cache Plaza.");
+        lines.push("Cache hit ratio rose to " + Math.round(s.hitRatio * 100) +
+          "% (from " + Math.round(before.hitRatio * 100) + "%), with " +
+          (s.astCount - before.astCount) + " blocking ASTs in that interval.");
+        lines.push("Cost: all attachments now share one server process " +
+          "instead of per-connection OS process isolation.");
+      } else {
+        runFor(s, 25);
+        lines.push("You stayed on Classic with 4 partitioned 16-buffer caches.");
+        lines.push("Cache hit ratio sat at " + Math.round(s.hitRatio * 100) +
+          "%, and the Lock Manager fired " + (s.astCount - before.astCount) +
+          " more blocking ASTs across attachments.");
+        lines.push("Cost: full process isolation, paid for in duplicate " +
+          "cached pages and cross-attachment AST flushes.");
       }
     }
 

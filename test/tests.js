@@ -611,7 +611,7 @@
   // ---- 5. decisions have measured, differing consequences --------------
 
   function testDecisions() {
-    t.ok("four decisions are defined", FB.challenges.length === 4);
+    t.ok("seven decisions are defined", FB.challenges.length === 7);
     FB.challenges.forEach(function (c) {
       t.eq("decision '" + c.id + "' offers two options", c.options.length, 2);
     });

@@ -77,7 +77,7 @@ for the correction.*
 
 ## Operator decisions
 
-Three situations where both answers cost something. Each one sets the world
+Seven situations where both answers cost something. Each one sets the world
 into the situation for real, then measures the consequence of your choice
 from the model rather than asserting it.
 
@@ -87,6 +87,9 @@ from the model rather than asserting it.
 | The backup is holding the OIT | Let gbak finish, or cancel it | **real** trade — the bloat is recoverable by sweep, the missing backup is not |
 | The delta file is growing | Unlock and merge now, or wait for a quiet window | **real** — merging costs measured page writes at peak; waiting grows the delta and does not shrink the merge |
 | The replica is gone | Stop replication and discard the backlog, or keep journalling and wait | **real** — dropping frees the disk but the replica needs a fresh restore, not a resume; waiting risks the volume filling and taking the primary with it |
+| Stale index statistics after bulk load | Run `SET STATISTICS INDEX` now, or defer to the maintenance window | **real** — Firebird does not recompute `RDB$STATISTICS` automatically on writes; recomputing restores B-Tree index scans |
+| Temp space thrashing under concurrent sorts | Raise `TempCacheLimit`, or keep it capped | **real** — trading per-attachment sort RAM against temporary-file disk spills |
+| SuperServer vs Classic under a fixed memory budget | Switch to SuperServer's shared cache, or keep Classic's isolated per-attachment caches | **real** — a unified buffer pool raises hit ratio and eliminates cross-process `blocking_ast_bdb` page flushes |
 
 The numbers quoted back to you in a verdict (versions collected, page writes,
 hit ratio, delta size) are measured from the run, not written in advance.

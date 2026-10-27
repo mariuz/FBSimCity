@@ -499,7 +499,7 @@ var UI = (function () {
       });
       html += "</div>";
     } else {
-      html += "<p class='fine'>Three situations where Firebird hands you a " +
+      html += "<p class='fine'>Seven situations where Firebird hands you a " +
         "genuinely hard call. Both answers cost something, and the verdict " +
         "is measured from what actually happens in the model.</p>";
       html += "<div class='decide-options'>";

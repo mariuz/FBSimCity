@@ -161,7 +161,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
     `OIT / OAT / OST / Next` and `MON$IO_STATS` / `databaseInfo()` deltas after
     each statement.
 
-### 11. Additional Operator Decisions
+### 11. [x] Additional Operator Decisions — *Completed*
 - **Stale index statistics after bulk load:** Run `SET STATISTICS INDEX` now
   (brief metadata lock + scan) or let queries keep choosing a bad plan.
 - **Temp space exhaustion under concurrent sorts:** Raise `TempCacheLimit`

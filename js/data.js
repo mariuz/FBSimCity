@@ -402,6 +402,53 @@ var FB = (function () {
           detail: "Avoids merge I/O now. The delta keeps growing, and it is " +
             "the free space on that volume you are betting." }
       ]
+    },
+    {
+      id: "stalestats",
+      title: "Stale index statistics after bulk load",
+      situation: "A bulk import modified rows across the main tables, and " +
+        "Firebird does not recompute RDB$STATISTICS automatically on writes. " +
+        "The optimizer now sees drifted selectivity on every index and has " +
+        "fallen back to natural table scans and external merge sorts.",
+      options: [
+        { id: "recompute", label: "Run SET STATISTICS INDEX now",
+          detail: "Scans index trees to refresh RDB$STATISTICS immediately. " +
+            "Restores B-Tree index walks at the cost of a brief metadata op." },
+        { id: "defer", label: "Wait for the maintenance window",
+          detail: "Touches no metadata during peak hours, but every SELECT " +
+            "keeps scanning tables naturally and sorting in the Sort Yard." }
+      ]
+    },
+    {
+      id: "sortspill",
+      title: "Temp space thrashing under concurrent sorts",
+      situation: "Reporting queries are flooding the Sort Yard while " +
+        "TempCacheLimit is set to a tight 8 units. Almost every sort outgrows " +
+        "its RAM budget and spills temporary run blocks to disk.",
+      options: [
+        { id: "raise", label: "Raise TempCacheLimit to 96 units",
+          detail: "Sorts fit in memory and stop spilling to disk, at the " +
+            "cost of a larger RAM footprint per sorting attachment." },
+        { id: "keep", label: "Keep TempCacheLimit at 8 units",
+          detail: "Caps per-query sort RAM strictly, but queries keep paying " +
+            "temporary-file disk I/O on almost every sort." }
+      ]
+    },
+    {
+      id: "classiccache",
+      title: "SuperServer vs Classic under a fixed memory budget",
+      situation: "The server is running in Classic mode with 64 page buffers " +
+        "partitioned across 4 attachments (16 buffers each against a 40-page " +
+        "hot set). Private caches are thrashing and Lock Manager blocking " +
+        "ASTs fire on every cross-attachment write.",
+      options: [
+        { id: "superserver", label: "Switch to SuperServer (shared cache)",
+          detail: "Unifies all 64 buffers into one shared Page Cache Plaza " +
+            "and eliminates cross-process page-lock ASTs." },
+        { id: "stayclassic", label: "Stay on Classic (process isolation)",
+          detail: "Preserves per-attachment process isolation, but keeps " +
+            "paying the partitioned cache-miss and blocking-AST tax." }
+      ]
     }
   ];
 
