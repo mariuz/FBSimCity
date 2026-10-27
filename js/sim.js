@@ -47,6 +47,9 @@ var Sim = (function () {
       // stats
       qps: 0, done: 0, completed: 0, statTimer: 0,
       lockWaits: 0, rollbacks: 0,
+      lockMode: "wait",      // wait | nowait (SET TRANSACTION WAIT / NO WAIT)
+      deadlocks: 0,          // true wait-for cycle rollbacks
+      noWaitAborts: 0,       // immediate conflict aborts under NO WAIT
 
       // sweep
       sweepTimer: 0, sweepActive: false, sweepProgress: 0, sweepBlocked: false,
@@ -116,7 +119,10 @@ var Sim = (function () {
       // chain[0] is the oldest version, chain[last] the current one;
       // each entry is the id of the transaction that wrote it (seeds sit
       // well below the initial markers, like rows loaded long ago)
-      s.tables.push({ versions: 1, flash: 0, chain: [960 + i], gcFlag: false });
+      s.tables.push({
+        versions: 1, flash: 0, chain: [960 + i], gcFlag: false,
+        lockHolder: null, waiters: []
+      });
     }
     setCacheSize(s, s.cacheSize);
     say(s, "Database on line. Cache " + s.cacheSize + " pages, sweep interval " +
@@ -458,6 +464,87 @@ var Sim = (function () {
     }
   }
 
+  // ---- per-table lock table & wait-for graph (src/jrd/lock/lock.cpp) ----
+
+  /* Hot-table skew: in OLTP workloads, a few hot tables (0..2) receive the
+   * majority of concurrent writes, where lock queues and deadlocks form. */
+  function pickTable(isWrite) {
+    if (isWrite && Math.random() < 0.68) {
+      return Math.floor(Math.random() * 3);
+    }
+    return Math.floor(Math.random() * TABLE_COUNT);
+  }
+
+  function pruneLocks(s) {
+    for (var i = 0; i < TABLE_COUNT; i++) {
+      var t = s.tables[i];
+      if (t.lockHolder && (t.lockHolder.dead || t.lockHolder.txn === null)) {
+        t.lockHolder = null;
+      }
+      if (t.waiters.length) {
+        t.waiters = t.waiters.filter(function (w) {
+          return !w.dead && w.txn !== null && w.waiting;
+        });
+      }
+      if (!t.lockHolder && t.waiters.length) {
+        var nextQ = t.waiters.shift();
+        t.lockHolder = nextQ;
+        if (nextQ.locksHeld.indexOf(i) === -1) nextQ.locksHeld.push(i);
+        nextQ.waiting = false;
+        nextQ.waitingOn = -1;
+        if (nextQ.dwell > 0.05) nextQ.dwell = 0.04;
+      }
+    }
+  }
+
+  /* Walk the wait-for graph starting from `holderQ`: if `holderQ` is waiting
+   * (directly or transitively) on a table lock held by `requesterQ`, then
+   * making `requesterQ` wait on `holderQ` would form a deadlock cycle. */
+  function detectDeadlockCycle(s, requesterQ, holderQ) {
+    var cur = holderQ, steps = 0;
+    while (cur && !cur.dead && cur.waitingOn >= 0 && steps < TABLE_COUNT) {
+      var tbl = s.tables[cur.waitingOn];
+      var nextHolder = tbl ? tbl.lockHolder : null;
+      if (!nextHolder) return false;
+      if (nextHolder === requesterQ ||
+          requesterQ.locksHeld.indexOf(cur.waitingOn) !== -1) {
+        return true;
+      }
+      cur = nextHolder;
+      steps++;
+    }
+    return false;
+  }
+
+  function releaseLocks(s, q) {
+    if (!q) return;
+    if (q.waitingOn >= 0 && q.waitingOn < TABLE_COUNT) {
+      var wt = s.tables[q.waitingOn];
+      var wi = wt.waiters.indexOf(q);
+      if (wi >= 0) wt.waiters.splice(wi, 1);
+      q.waitingOn = -1;
+      q.waiting = false;
+    }
+    for (var i = 0; i < TABLE_COUNT; i++) {
+      var t = s.tables[i];
+      if (t.lockHolder === q) {
+        t.lockHolder = null;
+        while (t.waiters.length) {
+          var nextQ = t.waiters.shift();
+          if (!nextQ.dead && nextQ.txn !== null) {
+            t.lockHolder = nextQ;
+            if (nextQ.locksHeld.indexOf(i) === -1) nextQ.locksHeld.push(i);
+            nextQ.waiting = false;
+            nextQ.waitingOn = -1;
+            if (nextQ.dwell > 0.05) nextQ.dwell = 0.04;
+            break;
+          }
+        }
+      }
+    }
+    if (q.locksHeld) q.locksHeld.length = 0;
+  }
+
   // ---- query particles -------------------------------------------------
 
   function wp(id, dwell, act) {
@@ -468,7 +555,10 @@ var Sim = (function () {
   function spawnQuery(s, traced) {
     var isUpdate = traced ? true : Math.random() < s.updateRatio;
     var reads = traced ? 2 : 1 + Math.floor(Math.random() * 3);
-    var tableIdx = Math.floor(Math.random() * TABLE_COUNT);
+    var tableIdx = pickTable(isUpdate);
+    var firstTable = (isUpdate && !traced && Math.random() < 0.45)
+      ? ((tableIdx + 1 + Math.floor(Math.random() * 2)) % 3)
+      : tableIdx;
     var path = [
       wp("harbor", 0.05),
       wp("yvalve", 0.12),
@@ -502,6 +592,9 @@ var Sim = (function () {
       speed: traced ? 8 : 12 + Math.random() * 5,
       kind: isUpdate ? "update" : "select",
       table: tableIdx,
+      firstTable: firstTable,
+      locksHeld: [],
+      waitingOn: -1,
       phase: "sql",           // sql -> blr -> result
       txn: null,
       snap: null,             // OAT when this query's transaction started
@@ -526,6 +619,7 @@ var Sim = (function () {
   }
 
   function finishTxn(s, q, rolledBack) {
+    releaseLocks(s, q);
     if (q.txn === null) return;
     var i = s.active.indexOf(q.txn);
     if (i >= 0) s.active.splice(i, 1);
@@ -556,6 +650,16 @@ var Sim = (function () {
         q.phase = "blr";
         break;
       case "page":
+        // Multi-table updates lock their first relation during the initial
+        // read/modify step before requesting the second relation at LOCK.
+        if (q.kind === "update" && !q.traced && q.locksHeld.length === 0 &&
+            q.firstTable !== q.table) {
+          var ft = s.tables[q.firstTable];
+          if (!ft.lockHolder) {
+            ft.lockHolder = q;
+            q.locksHeld.push(q.firstTable);
+          }
+        }
         if (cacheAccess(s, false)) {
           if (q.traced) s.traceNote = "hit";
           if (Math.random() < 0.35) coopGC(s, q.table);
@@ -592,23 +696,50 @@ var Sim = (function () {
         }
         break;
       }
-      case "lock":
-        // contention: some writers queue at the tower (traced queries are
-        // spared, so the guided walk stays predictable)
-        if (!q.traced && Math.random() < 0.22) {
-          q.waiting = true;
-          q.dwell += 0.5 + Math.random() * 1.6;
-          s.lockWaits++;
-          if (Math.random() < 0.06 && !q.traced) {
-            // deadlock victim: rollback, go home early
-            say(s, "Deadlock scan: txn " + q.txn + " rolled back.");
-            finishTxn(s, q, true);
-            q.phase = "rollback";
-            q.path = q.path.slice(0, q.idx + 1)
-              .concat([wp("exec", 0.05), wp("yvalve", 0.05), wp("harbor", 0, "done")]);
+      case "lock": {
+        pruneLocks(s);
+        var lt = s.tables[q.table !== undefined ? q.table : 0];
+        if (q.traced || !lt.lockHolder || lt.lockHolder === q) {
+          if (!q.traced) {
+            lt.lockHolder = q;
+            if (q.locksHeld.indexOf(q.table) === -1) q.locksHeld.push(q.table);
           }
+          break;
         }
+        // Contention: another active transaction holds the lock on q.table
+        var holderQ = lt.lockHolder;
+        s.lockWaits++;
+        if (s.lockMode === "nowait") {
+          // SET TRANSACTION NO WAIT: abort immediately without queuing
+          s.noWaitAborts++;
+          say(s, "NO WAIT lock conflict on T" + q.table + ": txn " + q.txn +
+            " aborted (held by txn " + holderQ.txn + ").");
+          finishTxn(s, q, true);
+          q.phase = "rollback";
+          q.dwell = 0.02;
+          q.path = q.path.slice(0, q.idx + 1)
+            .concat([wp("exec", 0.05), wp("yvalve", 0.05), wp("harbor", 0, "done")]);
+          break;
+        }
+        // WAIT mode: check if waiting on holderQ creates a wait-for cycle
+        if (detectDeadlockCycle(s, q, holderQ)) {
+          s.deadlocks++;
+          say(s, "Deadlock scan: cycle txn " + q.txn + " ↔ txn " + holderQ.txn +
+            " — txn " + q.txn + " rolled back.");
+          finishTxn(s, q, true);
+          q.phase = "rollback";
+          q.dwell = 0.16;
+          q.path = q.path.slice(0, q.idx + 1)
+            .concat([wp("exec", 0.05), wp("yvalve", 0.05), wp("harbor", 0, "done")]);
+          break;
+        }
+        // Queue behind the current lock holder on this table
+        q.waiting = true;
+        q.waitingOn = q.table;
+        if (lt.waiters.indexOf(q) === -1) lt.waiters.push(q);
+        q.dwell += 0.65 + Math.min(1.4, lt.waiters.length * 0.25);
         break;
+      }
       case "version": {
         var t = s.tables[q.table !== undefined ? q.table : Math.floor(Math.random() * TABLE_COUNT)];
         chaseVersionChain(s, q, t);
@@ -670,6 +801,16 @@ var Sim = (function () {
       var q = s.particles[i];
       chargeLatency(q, dt);
       if (q.dwell > 0) { q.dwell -= dt; q.waiting = q.waiting && q.dwell > 0; continue; }
+      if (q.waitingOn >= 0) {
+        var wt = s.tables[q.waitingOn];
+        var wi = wt.waiters.indexOf(q);
+        if (wi >= 0) wt.waiters.splice(wi, 1);
+        if (!wt.lockHolder) {
+          wt.lockHolder = q;
+          if (q.locksHeld.indexOf(q.waitingOn) === -1) q.locksHeld.push(q.waitingOn);
+        }
+        q.waitingOn = -1;
+      }
       q.waiting = false;
       q.latBucket = "travel";   // moving between stations costs travel time
       var step = q.path[q.idx];
@@ -690,6 +831,7 @@ var Sim = (function () {
     }
     if (hadDead) {
       s.particles = s.particles.filter(function (q) { return !q.dead; });
+      pruneLocks(s);
       refreshMarkers(s);
     }
     if (s.tracedQ && s.tracedQ.dead) {
@@ -1294,6 +1436,15 @@ var Sim = (function () {
 
   // ---- public API ------------------------------------------------------
 
+  function setLockMode(s, mode) {
+    if (mode !== "wait" && mode !== "nowait") return;
+    if (s.lockMode === mode) return;
+    s.lockMode = mode;
+    say(s, mode === "nowait"
+      ? "Lock mode set to NO WAIT — conflicting writers abort immediately."
+      : "Lock mode set to WAIT — conflicting writers queue at the Lock Manager Tower.");
+  }
+
   function setForcedWrites(s, on) {
     var val = !!on;
     if (s.forcedWrites === val) return;
@@ -1381,6 +1532,7 @@ var Sim = (function () {
     tick: tick,
     warm: warm,
     setCacheSize: setCacheSize,
+    setLockMode: setLockMode,
     setForcedWrites: setForcedWrites,
     setGcPolicy: setGcPolicy,
     setLongTxn: setLongTxn,

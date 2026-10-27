@@ -79,7 +79,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   dependency chain) and expose a **Forced writes** toggle so users can see the
   trade-off between commit latency and crash exposure.
 
-### 5. Real per-table lock queues, `WAIT` / `NO WAIT`, and wait-for cycles (`lock.cpp`)
+### 5. [x] Real per-table lock queues, `WAIT` / `NO WAIT`, and wait-for cycles (`lock.cpp`) — *Completed*
 - **Today in `sim.js`:** Lock contention at `Lock Manager Tower` is a flat 22%
   probability per write, and deadlocks are a flat 6% of waits.
 - **In Firebird (`src/jrd/lock/lock.cpp`):** Writers conflict only when

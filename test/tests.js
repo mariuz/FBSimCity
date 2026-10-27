@@ -63,6 +63,7 @@
       { id: "ctl-sweepon", doc: "Automatic sweep" },
       { id: "ctl-forcedwrites", doc: "Forced writes" },
       { id: "ctl-gcpolicy", doc: "GC policy" },
+      { id: "ctl-lockmode", doc: "Lock mode" },
       { id: "ctl-longtxn", doc: "Long-running transaction" },
       { id: "ctl-scenario", doc: "Scenario" },
       { id: "ctl-replmode", doc: "Replication mode" },
@@ -158,6 +159,25 @@
       Sim.latencyProfile(fwOn).mean.commit > Sim.latencyProfile(fwOff).mean.commit,
       "fwOn " + Sim.latencyProfile(fwOn).mean.commit.toFixed(3) +
       "s vs fwOff " + Sim.latencyProfile(fwOff).mean.commit.toFixed(3) + "s");
+
+    // Lock mode (WAIT vs NO WAIT) and wait-for cycle deadlocks:
+    // WAIT queues conflicting writers (higher lockWait latency), while
+    // NO WAIT aborts immediately on conflict (noWaitAborts > 0, lower lockWait)
+    var lkWait = Sim.create(), lkNoWait = Sim.create();
+    lkWait.queryRate = 14; lkWait.updateRatio = 0.9;
+    lkNoWait.queryRate = 14; lkNoWait.updateRatio = 0.9;
+    Sim.setLockMode(lkNoWait, "nowait");
+    run(lkWait, 45); run(lkNoWait, 45);
+    t.ok("WAIT mode queues conflicting writers on hot tables", lkWait.lockWaits > 0);
+    t.ok("WAIT mode detects real wait-for cycles", lkWait.deadlocks > 0,
+      "deadlocks=" + lkWait.deadlocks);
+    t.ok("NO WAIT mode aborts conflicting writers immediately",
+      lkNoWait.noWaitAborts > 0, "noWaitAborts=" + lkNoWait.noWaitAborts);
+    t.ok("WAIT mode spends more time in lockWait than NO WAIT mode",
+      Sim.latencyProfile(lkWait).mean.lockWait >
+      Sim.latencyProfile(lkNoWait).mean.lockWait,
+      "WAIT " + Sim.latencyProfile(lkWait).mean.lockWait.toFixed(3) +
+      "s vs NO WAIT " + Sim.latencyProfile(lkNoWait).mean.lockWait.toFixed(3) + "s");
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------
@@ -637,6 +657,7 @@
     var nums = {
       totalVersions: s.totalVersions, backversionReads: s.backversionReads,
       purges: s.purges, precedenceFlushes: s.precedenceFlushes,
+      deadlocks: s.deadlocks, noWaitAborts: s.noWaitAborts,
       next: s.next, oat: s.oat, ost: s.ost, oit: s.oit,
       hitRatio: s.hitRatio, evictions: s.evictions,
       dirtyEvictions: s.dirtyEvictions, pageWrites: s.pageWrites,
@@ -690,6 +711,7 @@
               s.tempCacheLimit = (cases % 2) ? 8 : 120;
               s.sweepEnabled = (cases % 3) !== 0;
               Sim.setForcedWrites(s, (cases % 4) !== 0);
+              Sim.setLockMode(s, (cases % 2) ? "wait" : "nowait");
               Sim.setGcPolicy(s, ["combined", "cooperative", "background"][cases % 3]);
               if (cases % 5 === 0) Sim.setLongTxn(s, true);
               if (cases % 7 === 0) Sim.toggleLock(s);

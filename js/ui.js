@@ -209,6 +209,11 @@ var UI = (function () {
         Sim.setGcPolicy(sim, this.value);
       });
     }
+    if ($("ctl-lockmode")) {
+      $("ctl-lockmode").addEventListener("change", function () {
+        Sim.setLockMode(sim, this.value);
+      });
+    }
     $("ctl-scenario").addEventListener("change", function () {
       if (this.value) applyScenario(this.value);
     });
@@ -596,9 +601,11 @@ var UI = (function () {
     els.infoCode.style.display = "";
     els.infoBody.innerHTML = "<p>" + b.desc + "</p>" +
       (id === "mvcc" ? "<div id='chain-live'></div>" : "") +
+      (id === "lock" ? "<div id='lock-live'></div>" : "") +
       actionsFor(id) +
       correctionLink(b.name + " (" + b.code + ")");
     if (id === "mvcc") renderChain(simRef);
+    if (id === "lock") renderLocks(simRef);
     wireActions();
     els.info.classList.remove("hidden");
   }
@@ -674,6 +681,15 @@ var UI = (function () {
       { id: "act-fw-cache", label: function (s) {
           return (s.forcedWrites ? "Switch off" : "Switch on") + " forced writes";
         }, fn: function (s) { setCheck("ctl-forcedwrites", !s.forcedWrites); } }
+    ],
+    lock: [
+      { id: "act-lockmode", label: function (s) {
+          return "Lock mode: " + (s.lockMode === "nowait" ? "NO WAIT" : "WAIT");
+        }, fn: function (s) {
+          var next = s.lockMode === "nowait" ? "wait" : "nowait";
+          Sim.setLockMode(s, next);
+          setSelect("ctl-lockmode", next);
+        } }
     ]
   };
 
@@ -747,6 +763,34 @@ var UI = (function () {
     if (chain.length === 1) {
       html += "<p class='fine'>One version — nothing for GC to do. Raise the " +
         "write mix or pin the OIT and watch the chain grow.</p>";
+    }
+    el.innerHTML = html;
+  }
+
+  function renderLocks(s) {
+    var el = $("lock-live");
+    if (!el) return;
+    var html = "<h3>Live relation lock table</h3>" +
+      "<p class='fine'>Mode: <b>" + (s.lockMode === "nowait" ? "NO WAIT" : "WAIT") +
+      "</b> &middot; Waits: <b>" + s.lockWaits +
+      "</b> &middot; Deadlocks: <b>" + s.deadlocks +
+      "</b> &middot; NO WAIT aborts: <b>" + s.noWaitAborts + "</b></p>";
+    var activeRows = 0;
+    for (var i = 0; i < s.tables.length; i++) {
+      var t = s.tables[i];
+      if (!t.lockHolder && !t.waiters.length) continue;
+      activeRows++;
+      var holderTxt = t.lockHolder && t.lockHolder.txn
+        ? "held by txn " + t.lockHolder.txn : "free";
+      var waitTxt = t.waiters.length
+        ? " &larr; queued: " + t.waiters.map(function (w) { return "txn " + w.txn; }).join(", ")
+        : "";
+      html += "<div class='chainrow " + (t.waiters.length ? "ver-dead" : "ver-ok") +
+        "'><span>T" + i + "</span>" + holderTxt + waitTxt + "</div>";
+    }
+    if (!activeRows) {
+      html += "<p class='fine'>No active write locks held right now. Raise " +
+        "the write mix or pick Lock contention to watch writers queue.</p>";
     }
     el.innerHTML = html;
   }
@@ -943,6 +987,9 @@ var UI = (function () {
 
     if (infoSelectedId === "mvcc" && !els.info.classList.contains("hidden")) {
       renderChain(s);
+    }
+    if (infoSelectedId === "lock" && !els.info.classList.contains("hidden")) {
+      renderLocks(s);
     }
     refreshActionLabels();
     renderLatency();

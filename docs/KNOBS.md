@@ -25,6 +25,7 @@ Three honesty levels:
 | Automatic sweep | on/off | Enables the gap-triggered sweep | **real** — corresponds to setting the sweep interval to 0 |
 | Forced writes | on/off | Firebird's `MON$FORCED_WRITES` (`gfix -write sync/async`): when on (default), commits flush dirty pages synchronously in careful-write precedence order (`CCH_precedence`); when off, commits return fast in RAM and dirty buffers are flushed periodically | **real** mechanism, **scaled** timings — turning forced writes off cuts commit latency at the cost of dirty-buffer accumulation and crash exposure |
 | GC policy | `combined`, `cooperative`, `background` | Firebird's `GCPolicy`: whether readers purge dead back-versions inline (`cooperative`, charging the reader's `version` latency and marking a cache buffer dirty), flag pages in `gc_record` bitmaps for a background thread (`background`), or both (`combined`) | **real** mechanism, **scaled** rates — `firebird-wasm` sets `cooperative` in the DPB; SuperServer defaults to `combined` |
+| Lock mode | `WAIT`, `NO WAIT` | `SET TRANSACTION WAIT` vs `NO WAIT`: whether a writer conflicting on a locked table queues at the Lock Manager Tower (and participates in deadlock cycle scans) or aborts immediately | **real** mechanism over 12 relation lock queues (`src/jrd/lock/lock.cpp`) |
 | Long-running transaction | on/off | Starts a transaction that never commits, pinning the OIT | **real** — this is exactly how a forgotten transaction stalls GC |
 | Rush hour ×60 | button | Injects 60 queries at once | **modeled** — a convenience for watching queueing |
 | Speed | 0.5–4× | Multiplies the simulation timestep | n/a — presentation only |
@@ -96,8 +97,8 @@ hit ratio, delta size) are measured from the run, not written in advance.
 | evictions (dirty) | Evictions that had to write the page out first | **real** — a dirty eviction makes a reader pay for someone else's write |
 | Next / OAT / OST / OIT | Transaction id counters (`Next`, Oldest Active, Oldest Snapshot, Oldest Interesting) | **real** arithmetic, **scaled** ids (`OIT` stays pinned at the earliest unswept rolled-back transaction until sweep finishes its pass; `OST` tracks the oldest active snapshot horizon) |
 | stale versions (walks) | Record versions beyond the current one summed over 12 tables, plus cumulative `MON$BACKVERSION_READS` delta steps walked | **real** mechanism, **scaled** counts — 12 tables, chains capped at 26 for display; deep chains slow down readers via `VIO_chase_record_version` |
-| lock waits | Writers that queued at the lock manager | **modeled** — a fixed 22% chance of contention per write, not a real lock table |
-| deadlock rollbacks | Waiters chosen as deadlock victims | **modeled** — 6% of waits, not a real wait-for graph |
+| lock waits | Writers that conflicted on a held table lock at the lock manager | **real** per-table lock queues with hot-table skew |
+| deadlock rollbacks | Transactions rolled back on wait-for cycles, `NO WAIT` conflicts, or statement aborts | **real** wait-for cycle detection (`src/jrd/lock/lock.cpp`) |
 | backup | Current backup state, or the completed level chain | **real** |
 | delta | Pages sitting in the difference file | **real** counting, **scaled** capacity |
 | model clock | Elapsed time inside the simulation, with the speed multiplier and pause state | **real** — it is the model's own clock, which warp and the speed control move faster than yours |
