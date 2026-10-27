@@ -977,7 +977,19 @@ var UI = (function () {
     pio: [
       { id: "act-fw", label: function (s) {
           return (s.forcedWrites ? "Switch off" : "Switch on") + " forced writes";
-        }, fn: function (s) { setCheck("ctl-forcedwrites", !s.forcedWrites); } }
+        }, fn: function (s) { setCheck("ctl-forcedwrites", !s.forcedWrites); } },
+      { id: "act-blob-pio", label: "Stream segmented BLOB (createBlobStream)",
+        fn: function (s) { Sim.spawnBlobStream(s, true, 4); } }
+    ],
+    exec: [
+      { id: "act-cursor-exec", label: "Stream cursor batches (queryStream)",
+        fn: function (s) { Sim.spawnCursorStream(s, 3); } },
+      { id: "act-blob-exec", label: "Read segmented BLOB (openBlobStream)",
+        fn: function (s) { Sim.spawnBlobStream(s, false, 4); } }
+    ],
+    yvalve: [
+      { id: "act-cursor-yvalve", label: "Stream cursor batches (queryStream)",
+        fn: function (s) { Sim.spawnCursorStream(s, 3); } }
     ],
     cache: [
       { id: "act-fw-cache", label: function (s) {

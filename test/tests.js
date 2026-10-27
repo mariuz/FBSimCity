@@ -299,6 +299,19 @@
     t.ok("telemetry bridge ingests db.introspect() catalog metadata and spawns a catalog query",
       qIntro && telSim.lastTelemetry.schema &&
       telSim.lastTelemetry.schema.tables.length === 1);
+
+    // Cursor batch streaming (PreparedStatement.queryStream) & segmented BLOB I/O (IBlob):
+    var streamSim = Sim.create();
+    streamSim.queryRate = 0;
+    var qCur = Sim.spawnCursorStream(streamSim, 3);
+    var qBlob = Sim.spawnBlobStream(streamSim, true, 4);
+    run(streamSim, 12);
+    t.ok("cursor stream emits batch packets from EXE -> Y-Valve -> Harbor",
+      qCur && qCur.isCursor && streamSim.cursorBatches >= 3,
+      "cursorBatches=" + streamSim.cursorBatches);
+    t.ok("segmented BLOB stream writes dedicated BLOB pages on Database File (PIO)",
+      qBlob && qBlob.isBlob && streamSim.blobSegments >= 4,
+      "blobSegments=" + streamSim.blobSegments);
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------
@@ -790,6 +803,7 @@
       statsRecomputed: s.statsRecomputed,
       commitNumber: s.commitNumber, writeRestarts: s.writeRestarts,
       updateConflicts: s.updateConflicts, stmtCacheHits: s.stmtCacheHits,
+      cursorBatches: s.cursorBatches, blobSegments: s.blobSegments,
       astCount: s.astCount,
       time: s.time
     };

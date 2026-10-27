@@ -348,6 +348,18 @@ var Render = (function () {
       ctx.fill();
       ctx.restore();
     }
+    // BLOB page segment zone on the right-hand stripes of the database file
+    if (s.blobFlash > 0) {
+      var bx0 = b.x + b.w * 0.78, bx1 = b.x + b.w - 0.5;
+      var bp0 = proj(cam, bx0, b.y + 0.45, -depth + 0.04),
+          bp1 = proj(cam, bx1, b.y + 0.45, -depth + 0.04),
+          bp2 = proj(cam, bx1, b.y + b.d - 0.45, -depth + 0.04),
+          bp3 = proj(cam, bx0, b.y + b.d - 0.45, -depth + 0.04);
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, s.blobFlash * 0.85));
+      poly(ctx, [bp0, bp1, bp2, bp3], "rgba(192,132,252,0.32)", "#c084fc", 1.4);
+      ctx.restore();
+    }
     if (cam.zoom > 0.55) {
       ctx.fillStyle = s.forcedWrites === false ? "#ffa94d" : T.pitLabel;
       ctx.font = (10 * Math.min(cam.zoom, 1.3)) + "px 'Segoe UI', sans-serif";
@@ -699,7 +711,7 @@ var Render = (function () {
   function drawParticle(ctx, cam, q, time) {
     var color = PHASE_COLORS[q.phase] || "#22d3ee";
     var p = proj(cam, q.x, q.y, 0.35);
-    var r = (q.kind === "update" ? 4.4 : 3.4) * cam.zoom;
+    var r = (q.isBatch ? 2.4 : q.kind === "update" ? 4.4 : 3.4) * cam.zoom;
     var shape = particleShape(q);
     ctx.save();
     // Motion trail (suppressed when prefers-reduced-motion / calm is active)
@@ -749,6 +761,18 @@ var Render = (function () {
       ctx.beginPath();
       ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
       ctx.fill();
+      if (q.isBatch) {
+        ctx.beginPath();
+        ctx.arc(p[0] - r * 1.45, p[1] - r * 0.65, r * 0.72, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    if (q.isBlob) {
+      ctx.strokeStyle = "#c084fc";
+      ctx.lineWidth = Math.max(1.2, 1.8 * cam.zoom);
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], r + 2.5 * cam.zoom, 0, Math.PI * 2);
+      ctx.stroke();
     }
     if (q.waiting) {
       ctx.strokeStyle = "#ff6b6b";

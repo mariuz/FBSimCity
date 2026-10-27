@@ -320,19 +320,21 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
     `Sim.spawnExplainedQuery()` and map them deterministically to the city's 12
     tables (`T0..T11`).
 
-### 22. Cursor batch streaming (`PreparedStatement.queryStream()`) & segmented BLOB I/O (`IBlob`)
+### 22. [x] Cursor batch streaming (`PreparedStatement.queryStream()`) & segmented BLOB I/O (`IBlob`) — *Completed*
 - **Today in `sim.js`:** Every `SELECT` returns a single monolithic result
   particle from `Execution Hall` → `Y-Valve Gate` → `Client Harbor`, and BLOB
   pages are not distinguished from regular data pages.
-- **Improvement:**
-  - Model `PreparedStatement.queryStream({ fetchSize })` (`firebird-wasm`
-    `0.13.0`): long-running cursor queries hold their snapshot (`OST`) open
-    while emitting a train of smaller batch-fetch sub-particles between `EXE`,
+- **Completed:**
+  - Modeled `PreparedStatement.queryStream({ fetchSize })` (`firebird-wasm`
+    `0.13.0`) via `Sim.spawnCursorStream()` and cursor batch sub-particles:
+    long-running cursor queries hold their snapshot (`OST`) open while emitting
+    a train of batch-fetch sub-particles (`s.cursorBatches`) between `EXE`,
     `Y-VALVE`, and `REMOTE`.
-  - Model segmented BLOB reads/writes (`openBlobStream` / `createBlobStream` in
-    `src/jrd/blb.cpp`): large payloads allocate dedicated BLOB pages on the
-    `Database File (PIO)` and stream segments without evicting hot relational
-    index pages.
+  - Modeled segmented BLOB reads/writes (`openBlobStream` / `createBlobStream` in
+    `src/jrd/blb.cpp`) via `Sim.spawnBlobStream()`: large payloads allocate
+    dedicated BLOB pages on the `Database File (PIO)` (`s.blobSegments`,
+    `s.blobFlash`) and stream segments without evicting hot relational index
+    pages.
 
 ### 23. Durable write-queue (`FB_WRITE_QUEUE$`) & optimistic pre-image rollback modeling
 - **What `firebird-wasm` `0.13.0` adds:** `createWriteQueue()` persists pending

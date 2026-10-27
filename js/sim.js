@@ -78,6 +78,9 @@ var Sim = (function () {
       indexScans: 0, naturalScans: 0, statsRecomputed: 0,
       stmtCacheRatio: 0,     // StatementCacheSize hit ratio (0..1)
       stmtCacheHits: 0,      // compiled statements reused without DSQL/CMP parse
+      cursorBatches: 0,      // cursor batch packets streamed via queryStream()
+      blobSegments: 0,       // segmented BLOB I/O blocks via openBlobStream/createBlobStream
+      blobFlash: 0,          // BLOB page zone activity flash on Database File (pio)
       telemetryEvents: 0,    // live telemetry packets from firebird-wasm
       lastTelemetry: null,   // {sql, planText, info} from Machine Room / explain()
 
@@ -680,6 +683,7 @@ var Sim = (function () {
       needsPlan: !isUpdate && Math.random() < 0.55,
       planApplied: false,
       plan: isUpdate ? "INDEX+UPD" : "NATURAL",
+      isCursor: !isUpdate && !traced && Math.random() < 0.22,
       locksHeld: [],
       waitingOn: -1,
       hadLockWait: false,
@@ -707,6 +711,42 @@ var Sim = (function () {
     s.particles.push(q);
     refreshMarkers(s);
     return q;
+  }
+
+  /* Emit a lightweight result-batch packet from Execution Hall -> Y-Valve ->
+   * Client Harbor (`PreparedStatement.queryStream({ fetchSize })` in
+   * firebird-wasm 0.13.0). Does not increment s.done / s.completed so query
+   * throughput metrics remain strictly one-per-query. */
+  function spawnBatchParticle(s, parentQ) {
+    if (s.particles.length >= 340) return null;
+    s.cursorBatches++;
+    var bq = {
+      x: FB.stations.exec.x, y: FB.stations.exec.y,
+      path: [
+        wp("yvalve", 0.03),
+        wp("harbor", 0, "batchdone")
+      ],
+      idx: 0, dwell: 0.02,
+      speed: 17,
+      kind: "select",
+      isBatch: true,
+      attachment: parentQ ? parentQ.attachment : 0,
+      table: parentQ ? parentQ.table : 0,
+      firstTable: parentQ ? parentQ.table : 0,
+      locksHeld: [],
+      waitingOn: -1,
+      phase: "result",
+      txn: null,
+      snap: null,
+      traced: false,
+      waiting: false,
+      dead: false,
+      trail: [],
+      lat: newLat(),
+      latBucket: "travel"
+    };
+    s.particles.push(bq);
+    return bq;
   }
 
   function finishTxn(s, q, rolledBack) {
@@ -801,13 +841,36 @@ var Sim = (function () {
         var rt = s.tables[q.table !== undefined ? q.table : Math.floor(Math.random() * TABLE_COUNT)];
         chaseVersionChain(s, q, rt);
         if (Math.random() < 0.65) coopGC(s, q.table, q);
+        if (q.isCursor) {
+          spawnBatchParticle(s, q);
+        }
         break;
       }
+      case "cursorbatch":
+        spawnBatchParticle(s, q);
+        break;
       case "wpage": {
         var wHit = cacheAccess(s, true, q.attachment);
         if (q.traced) s.traceNote = wHit ? "hit" : "miss";
+        if (!q.traced && Math.random() < 0.12) {
+          s.blobSegments++;
+          s.blobFlash = 1;
+        }
         break;
       }
+      case "blobseg":
+        // Segmented BLOB I/O (src/jrd/blb.cpp, IBlob / openBlobStream /
+        // createBlobStream): streams large payload segments directly against
+        // dedicated BLOB pages on the Database File (pio) without evicting
+        // hot relational B-Tree / data pages from the shared buffer pool.
+        s.blobSegments += (q.blobSegCount || 3);
+        s.blobFlash = 1;
+        s.diskFlash = 1;
+        s.diskPos = 0.84 + Math.random() * 0.14;
+        if (q.kind === "update") {
+          s.pageWrites += (q.blobSegCount || 3);
+        }
+        break;
       case "btr":
         s.btrFlash = 1;
         s.btrLeaf = (q.table !== undefined ? q.table : 0) % 4;
@@ -984,6 +1047,10 @@ var Sim = (function () {
         s.done++;      // reset every stats window
         s.completed++; // lifetime, so the qps readout can be checked against it
         recordLatency(s, q);
+        break;
+      case "batchdone":
+        q.snap = null;
+        q.dead = true;
         break;
     }
     q.waiting = q.waiting && step.act === "lock";
@@ -1924,6 +1991,132 @@ var Sim = (function () {
     return null;
   }
 
+  /* Spawn a long-lived cursor query (`PreparedStatement.queryStream({ fetchSize })`
+   * in firebird-wasm 0.13.0) that holds its snapshot (OST) open at Execution Hall
+   * while streaming a train of batch-fetch packets back through Y-Valve -> Harbor. */
+  function spawnCursorStream(s, batches) {
+    var nBatches = Math.max(1, Math.min(8, +batches || 3));
+    var tableIdx = Math.floor(Math.random() * 8);
+    var path = [
+      wp("harbor", 0.04),
+      wp("yvalve", 0.06, "stmtcache"),
+      wp("exec", 0.10, "execstart"),
+      wp("cache", 0.08, "page"),
+      wp("mvcc", 0.04, "rversion")
+    ];
+    for (var i = 0; i < nBatches; i++) {
+      path.push(wp("exec", 0.16, "cursorbatch"));
+    }
+    path.push(wp("yvalve", 0.05, "result"));
+    path.push(wp("harbor", 0, "done"));
+
+    var emptyFloor = s.next > 1000 ? s.next : 999;
+    var activeFloor = s.active.length ? Math.min.apply(null, s.active) : emptyFloor;
+    var q = {
+      x: FB.stations.harbor.x, y: FB.stations.harbor.y,
+      path: path, idx: 0, dwell: 0.04,
+      speed: 16,
+      kind: "select",
+      isCursor: true,
+      cursorBatches: nBatches,
+      attachment: Math.floor(Math.random() * 4),
+      table: tableIdx,
+      firstTable: tableIdx,
+      stmtCached: true,
+      needsPlan: false,
+      planApplied: true,
+      plan: "CURSOR+BATCH",
+      locksHeld: [],
+      waitingOn: -1,
+      hadLockWait: false,
+      startCn: s.commitNumber,
+      stmtCn: s.commitNumber,
+      phase: "sql",
+      txn: null,
+      snap: activeFloor,
+      traced: false,
+      waiting: false,
+      dead: false,
+      trail: [],
+      lat: newLat(),
+      latBucket: "travel"
+    };
+    s.particles.push(q);
+    refreshMarkers(s);
+    say(s, "Cursor stream opened (queryStream): holding snapshot " + q.snap +
+      " across " + nBatches + " result batches.");
+    return q;
+  }
+
+  /* Spawn a segmented BLOB stream (`IBlob` / `openBlobStream` / `createBlobStream`
+   * in src/jrd/blb.cpp) that reads or writes dedicated BLOB pages on the
+   * Database File (pio) without evicting hot relational B-Tree or data pages
+   * from the shared buffer pool. */
+  function spawnBlobStream(s, isWrite, segments) {
+    var writeMode = isWrite !== false;
+    var nSegs = Math.max(1, Math.min(12, +segments || 4));
+    var tableIdx = Math.floor(Math.random() * TABLE_COUNT);
+    var path = [
+      wp("harbor", 0.04),
+      wp("yvalve", 0.06, "stmtcache"),
+      wp("exec", 0.08, "execstart"),
+      wp("pio", 0.18, "blobseg")
+    ];
+    if (writeMode) {
+      path.push(wp("mvcc", 0.12, "version"));
+      path.push(wp("tra", 0.04, "commit"));
+    } else {
+      path.push(wp("mvcc", 0.04, "rversion"));
+    }
+    path.push(wp("exec", 0.06));
+    path.push(wp("yvalve", 0.05, "result"));
+    path.push(wp("harbor", 0, "done"));
+
+    var emptyFloor = s.next > 1000 ? s.next : 999;
+    var activeFloor = s.active.length ? Math.min.apply(null, s.active) : emptyFloor;
+    var q = {
+      x: FB.stations.harbor.x, y: FB.stations.harbor.y,
+      path: path, idx: 0, dwell: 0.04,
+      speed: 13,
+      kind: writeMode ? "update" : "select",
+      isBlob: true,
+      blobSegCount: nSegs,
+      attachment: Math.floor(Math.random() * 4),
+      table: tableIdx,
+      firstTable: tableIdx,
+      stmtCached: true,
+      needsPlan: false,
+      planApplied: true,
+      plan: writeMode ? "BLOB+WRITE" : "BLOB+READ",
+      locksHeld: [],
+      waitingOn: -1,
+      hadLockWait: false,
+      startCn: s.commitNumber,
+      stmtCn: s.commitNumber,
+      phase: "sql",
+      txn: null,
+      snap: null,
+      traced: false,
+      waiting: false,
+      dead: false,
+      trail: [],
+      lat: newLat(),
+      latBucket: "travel"
+    };
+    if (writeMode) {
+      q.txn = s.next++;
+      s.active.push(q.txn);
+      q.snap = Math.min(activeFloor, q.txn);
+    } else {
+      q.snap = activeFloor;
+    }
+    s.particles.push(q);
+    refreshMarkers(s);
+    say(s, (writeMode ? "createBlobStream" : "openBlobStream") +
+      " (IBlob): streaming " + nSegs + " BLOB segments on dedicated BLOB pages.");
+    return q;
+  }
+
   function setStmtCacheRatio(s, ratio) {
     var r = Math.max(0, Math.min(1, +ratio || 0));
     s.stmtCacheRatio = r;
@@ -2032,6 +2225,7 @@ var Sim = (function () {
       if (s.tables[i].purgeFlash > 0) s.tables[i].purgeFlash -= dt * 2.2;
     }
     if (s.diskFlash > 0) s.diskFlash -= dt * 2.5;
+    if (s.blobFlash > 0) s.blobFlash -= dt * 2.0;
     if (s.btrFlash > 0) s.btrFlash -= dt * 2.0;
     if (s.btrSplitFlash > 0) s.btrSplitFlash -= dt * 2.2;
     if (s.sortFlash > 0) s.sortFlash -= dt * 1.8;
@@ -2061,6 +2255,8 @@ var Sim = (function () {
     setServerMode: setServerMode,
     setStmtCacheRatio: setStmtCacheRatio,
     spawnExplainedQuery: spawnExplainedQuery,
+    spawnCursorStream: spawnCursorStream,
+    spawnBlobStream: spawnBlobStream,
     ingestTelemetry: ingestTelemetry,
     recomputeStatistics: recomputeStatistics,
     degradeStatistics: degradeStatistics,
