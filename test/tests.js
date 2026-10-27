@@ -253,6 +253,38 @@
     t.ok("SuperServer shared cache achieves higher hit ratio than partitioned Classic caches",
       smSuper.hitRatio > smClassic.hitRatio,
       "super " + smSuper.hitRatio.toFixed(2) + " vs classic " + smClassic.hitRatio.toFixed(2));
+
+    // Live telemetry bridge from the Machine Room (firebird-wasm 0.12.0):
+    // Sim.ingestTelemetry() routes particles through the exact districts
+    // chosen by db.explain() (B-Tree Gardens for INDEX, Sort Yard for SORT,
+    // Lock + VIO + TRA for UPDATE)
+    var telSim = Sim.create();
+    telSim.queryRate = 0;
+    var qIdx = Sim.ingestTelemetry(telSim, {
+      sql: "SELECT ID FROM MGA_DEMO WHERE ID = 1",
+      planText: "Select Expression\n  -> Index \"RDB$PRIMARY1\" Unique Scan"
+    });
+    var qSort = Sim.ingestTelemetry(telSim, {
+      sql: "SELECT NAME FROM MGA_DEMO ORDER BY NAME",
+      planText: "Select Expression\n  -> Sort (record length: 68)\n    -> Table \"MGA_DEMO\" Full Scan"
+    });
+    var qUpd = Sim.ingestTelemetry(telSim, {
+      sql: "UPDATE MGA_DEMO SET NAME = 'x' WHERE ID = 1",
+      planText: "Select Expression\n  -> Index \"RDB$PRIMARY1\" Unique Scan"
+    });
+    t.ok("telemetry bridge routes INDEX plans through B-Tree Gardens",
+      qIdx && qIdx.plan === "INDEX" &&
+      qIdx.path.some(function (w) { return w.at === "btr"; }));
+    t.ok("telemetry bridge routes SORT plans through Sort Yard",
+      qSort && qSort.plan === "NATURAL+SORT" &&
+      qSort.path.some(function (w) { return w.at === "sort"; }));
+    t.ok("telemetry bridge routes UPDATE statements through Lock, VIO and TRA",
+      qUpd && qUpd.kind === "update" &&
+      qUpd.path.some(function (w) { return w.at === "lock"; }) &&
+      qUpd.path.some(function (w) { return w.at === "mvcc"; }) &&
+      qUpd.path.some(function (w) { return w.at === "tra"; }));
+    t.eq("telemetry bridge counts ingested telemetry packets",
+      telSim.telemetryEvents, 3);
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------

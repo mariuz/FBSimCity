@@ -319,6 +319,14 @@ var UI = (function () {
     }
 
     // first-visit gesture hint, dismissed by the first gesture
+    try {
+      if (typeof BroadcastChannel !== "undefined") {
+        var bc = new BroadcastChannel("fbsimcity-telemetry");
+        bc.onmessage = function (ev) {
+          if (ev && ev.data) Sim.ingestTelemetry(sim, ev.data);
+        };
+      }
+    } catch (e) { }
     var hinted = null;
     try { hinted = localStorage.getItem("fbsimcity-hinted"); } catch (e) { }
     if (!hinted) {
@@ -760,6 +768,20 @@ var UI = (function () {
         }, fn: function (s) {
           var next = s.stmtCacheRatio > 0 ? 0 : 80;
           setRange("ctl-stmtcache", next);
+        } },
+      { id: "act-explain-idx", label: "Dispatch explained SELECT (PLAN INDEX)",
+        fn: function (s) {
+          Sim.ingestTelemetry(s, {
+            sql: "SELECT ID, NAME FROM MGA_DEMO WHERE ID = 1",
+            planText: "Select Expression\n  -> Filter\n    -> Table \"MGA_DEMO\" Access By ID\n      -> Bitmap\n        -> Index \"RDB$PRIMARY1\" Unique Scan"
+          });
+        } },
+      { id: "act-explain-sort", label: "Dispatch explained SELECT (PLAN SORT)",
+        fn: function (s) {
+          Sim.ingestTelemetry(s, {
+            sql: "SELECT ID, NAME FROM MGA_DEMO ORDER BY NAME",
+            planText: "Select Expression\n  -> Sort (record length: 68, key length: 44)\n    -> Table \"MGA_DEMO\" Full Scan"
+          });
         } }
     ],
     btr: [
@@ -897,6 +919,10 @@ var UI = (function () {
         eff.toFixed(3) + ")</span>" + plan +
         (t.statDrift > 0.02 ? " <em>(drift +" + t.statDrift.toFixed(2) + ")</em>" : "") +
         "</div>";
+    }
+    if (s.lastTelemetry && (s.lastTelemetry.sql || s.lastTelemetry.planText)) {
+      html += "<p class='fine'>Last <code>db.explain()</code> telemetry: <code>" +
+        s.lastTelemetry.sql.slice(0, 44) + "</code></p>";
     }
     el.innerHTML = html;
   }

@@ -145,7 +145,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   Plaza`, and adds a new operator decision (*"SuperServer vs SuperClassic under
   a memory budget"*).
 
-### 10. Live telemetry bridge from the Machine Room (`firebird-wasm` 0.12.0)
+### 10. [x] Live telemetry bridge from the Machine Room (`firebird-wasm` 0.12.0) — *Completed*
 - **Why:** With `firebird-wasm` 0.12.0 exposing `db.databaseInfo()`
   (`oldestTransaction`, `oldestActive`, `oldestSnapshot`, `nextTransaction`,
   `fetches`, `reads`, `writes`, `marks`, `allocatedPages`) and

@@ -78,6 +78,8 @@ var Sim = (function () {
       indexScans: 0, naturalScans: 0, statsRecomputed: 0,
       stmtCacheRatio: 0,     // StatementCacheSize hit ratio (0..1)
       stmtCacheHits: 0,      // compiled statements reused without DSQL/CMP parse
+      telemetryEvents: 0,    // live telemetry packets from firebird-wasm
+      lastTelemetry: null,   // {sql, planText, info} from Machine Room / explain()
 
       // where completed queries actually spent their time, sampled over the
       // last LAT_SAMPLE trips rather than asserted
@@ -1610,6 +1612,113 @@ var Sim = (function () {
         " — cache partitioned per attachment; coherence enforced via Lock Manager ASTs.");
   }
 
+  /* Route a query particle according to an actual Firebird execution plan
+   * returned by firebird-wasm's db.explain(sql, { detailed: true }). */
+  function spawnExplainedQuery(s, sql, planText) {
+    var sqlStr = String(sql || "SELECT * FROM RDB$DATABASE");
+    var planStr = String(planText || "");
+    var isUpdate = /^\s*(insert|update|delete|merge)\b/i.test(sqlStr);
+    var hasIndex = /\bindex\b/i.test(planStr);
+    var hasSort = /\bsort\b/i.test(planStr);
+    var tableIdx = pickTable(isUpdate);
+
+    var path = [
+      wp("harbor", 0.05),
+      wp("yvalve", 0.10),
+      wp("lexer", 0.12),
+      wp("parser", 0.15),
+      wp("blrgen", 0.12, "blr"),
+      wp("security", 0.06),
+      wp("cmp", 0.18, "compile"),
+      wp("exec", 0.12, "execstart"),
+      wp("cache", 0.08, "page")
+    ];
+    if (isUpdate) {
+      if (hasIndex) {
+        s.indexScans++;
+        path.push(wp("btr", 0.12, "btr"));
+      }
+      path.push(wp("lock", 0.12, "lock"));
+      path.push(wp("mvcc", 0.18, "version"));
+      path.push(wp("cache", 0.08, "wpage"));
+      path.push(wp("tra", 0.04, "commit"));
+    } else {
+      path.push(wp("mvcc", 0.04, "rversion"));
+      if (hasIndex) {
+        s.indexScans++;
+        path.push(wp("btr", 0.14, "btr"));
+      }
+      if (hasSort) {
+        s.naturalScans++;
+        path.push(wp("sort", 0.15, "sort"));
+      } else if (!hasIndex) {
+        s.naturalScans++;
+      }
+    }
+    path.push(wp("exec", 0.08));
+    path.push(wp("yvalve", 0.06, "result"));
+    path.push(wp("harbor", 0, "done"));
+
+    var emptyFloor = s.next > 1000 ? s.next : 999;
+    var activeFloor = s.active.length ? Math.min.apply(null, s.active) : emptyFloor;
+    var q = {
+      x: FB.stations.harbor.x, y: FB.stations.harbor.y,
+      path: path, idx: 0, dwell: 0.05,
+      speed: 13,
+      kind: isUpdate ? "update" : "select",
+      attachment: Math.floor(Math.random() * 4),
+      table: tableIdx,
+      firstTable: tableIdx,
+      stmtCached: false,
+      needsPlan: false,
+      planApplied: true,
+      plan: hasIndex && hasSort ? "INDEX+SORT"
+        : hasIndex ? "INDEX"
+        : hasSort ? "NATURAL+SORT" : "NATURAL",
+      sql: sqlStr,
+      planText: planStr,
+      locksHeld: [],
+      waitingOn: -1,
+      hadLockWait: false,
+      startCn: s.commitNumber,
+      stmtCn: s.commitNumber,
+      phase: "sql",
+      txn: null,
+      snap: null,
+      traced: false,
+      waiting: false,
+      dead: false,
+      lat: newLat(),
+      latBucket: "travel"
+    };
+    if (isUpdate) {
+      q.txn = s.next++;
+      s.active.push(q.txn);
+      q.snap = Math.min(activeFloor, q.txn);
+    } else {
+      q.snap = activeFloor;
+    }
+    s.particles.push(q);
+    refreshMarkers(s);
+    say(s, "Live engine plan (" + q.plan + "): " +
+      sqlStr.replace(/\s+/g, " ").slice(0, 48));
+    return q;
+  }
+
+  function ingestTelemetry(s, tel) {
+    if (!tel || typeof tel !== "object") return null;
+    s.telemetryEvents++;
+    s.lastTelemetry = {
+      sql: tel.sql || "",
+      planText: tel.planText || "",
+      info: tel.info || null
+    };
+    if (tel.sql || tel.planText) {
+      return spawnExplainedQuery(s, tel.sql, tel.planText);
+    }
+    return null;
+  }
+
   function setStmtCacheRatio(s, ratio) {
     var r = Math.max(0, Math.min(1, +ratio || 0));
     s.stmtCacheRatio = r;
@@ -1739,6 +1848,8 @@ var Sim = (function () {
     setCacheSize: setCacheSize,
     setServerMode: setServerMode,
     setStmtCacheRatio: setStmtCacheRatio,
+    spawnExplainedQuery: spawnExplainedQuery,
+    ingestTelemetry: ingestTelemetry,
     recomputeStatistics: recomputeStatistics,
     degradeStatistics: degradeStatistics,
     setIsolationMode: setIsolationMode,

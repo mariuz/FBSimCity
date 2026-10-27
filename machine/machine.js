@@ -40,6 +40,15 @@ const els = {
 
 let db = null;
 let busy = false;
+const telemetryChannel = typeof BroadcastChannel !== 'undefined'
+  ? new BroadcastChannel('fbsimcity-telemetry')
+  : null;
+
+function broadcastTelemetry(payload) {
+  try {
+    if (telemetryChannel) telemetryChannel.postMessage(payload);
+  } catch (e) { /* ignore cross-tab broadcast errors */ }
+}
 
 /* ---- the sequences ---------------------------------------------------- *
  *
@@ -392,13 +401,22 @@ async function explainOne(sql) {
     db.explain(sql),
     db.explain(sql, { detailed: true }),
   ]);
+  broadcastTelemetry({ sql, planText: detailed || plan || '' });
   return { plan, detailed };
 }
 
 async function runOne(sql, kind) {
   if (kind === 'explain') return explainOne(sql);
   const wantQuery = kind ? kind === 'query' : looksLikeQuery(sql);
-  return wantQuery ? db.query(sql) : db.exec(sql);
+  let planText = '';
+  try {
+    if (typeof db.explain === 'function') {
+      planText = (await db.explain(sql, { detailed: true })) || '';
+    }
+  } catch (e) { /* DDL statements carry no execution plan */ }
+  const res = await (wantQuery ? db.query(sql) : db.exec(sql));
+  broadcastTelemetry({ sql, planText });
+  return res;
 }
 
 async function refreshMarkers() {
@@ -413,6 +431,7 @@ async function refreshMarkers() {
       document.getElementById('mk-next').textContent = info.nextTransaction;
       document.getElementById('mk-page').textContent = info.pageSize;
       document.getElementById('mk-buf').textContent = info.pageBuffers;
+      broadcastTelemetry({ info });
       return;
     }
     const res = await db.query(
