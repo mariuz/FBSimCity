@@ -1,13 +1,13 @@
 # Roadmap
 
-Planned improvements to **FBSimCity**, grouped into **engine-accuracy fixes**
-(closing the gap between [`js/sim.js`](../js/sim.js) and Firebird's actual C++
-implementation in `src/jrd/`) and **simulation & interactive features** (new
-districts, controls, scenarios, and tighter integration with the
-[`firebird-wasm`](https://github.com/mariuz/electric-firebird) engine in the
-[machine room](../machine/)).
+Planned improvements to **FBSimCity**, grouped into four areas:
 
-Every item below corresponds to a simplification currently recorded in
+1. **[Engine Accuracy (`js/sim.js` vs `src/jrd/`)](#part-1--engine-accuracy-jssimjs-vs-srcjrd)** — closing the gap between [`js/sim.js`](../js/sim.js) and Firebird's actual C++ implementation in `src/jrd/`.
+2. **[Simulation & Interactive Features](#part-2--simulation--interactive-features)** — new districts, controls, scenarios, and tighter integration with the [`firebird-wasm`](https://github.com/mariuz/electric-firebird) engine in the [machine room](../machine/).
+3. **[Rendering & Visual Readouts (`js/render.js`)](#part-3--rendering--visual-readouts-jsrenderjs)** — sharper isometric picking, depth sorting, and on-canvas subsystem visualisations.
+4. **[Interface & UX (`js/ui.js`, `css/style.css`)](#part-4--interface--ux-jsuijs-cssstylecss)** — non-overlapping panels, custom query tracing, time-series scrubbing, and shareable deep-links.
+
+Every accuracy item in Part 1 corresponds to a simplification currently recorded in
 [`docs/KNOBS.md`](KNOBS.md).
 
 ---
@@ -168,3 +168,131 @@ Every item below corresponds to a simplification currently recorded in
   (risking OS memory pressure) or throttle report queries spilling to disk.
 - **Unindexed foreign key on child table:** Add the supporting index online or
   suffer table-scan lock waits on parent deletes.
+
+---
+
+## Part 3 — Rendering & Visual Readouts (`js/render.js`)
+
+### 12. Exact isometric polygon hit-testing & per-tower MVCC inspection
+- **Today in `render.js`:** `pick()` tests a 2D axis-aligned bounding box
+  (`x0..x1`, `y0..y1`) around the 8 projected vertices of each building, and
+  only attaches `building` metadata to the first `Record Version Tower`
+  (`i === 0 ? m : null`). Clicking near diagonal edges of adjacent buildings
+  (`lexer` / `parser` / `blrgen`) or clicking one of the other 11 MVCC towers
+  either mis-picks a neighbour or opens the generic `mvcc` building card.
+- **Improvement:**
+  - Replace the 2D AABB check in `pick()` with point-in-polygon tests against
+    the three visible isometric quads (top, left, right faces) in reverse
+    painter order.
+  - Make each of the 12 `Record Version Towers` (`s.tables[0..11]`) individually
+    hoverable and clickable, showing a tooltip and inspector breakdown of that
+    table's current version count, oldest `minTx`, and how many versions are
+    eligible for GC (`tx < OIT`).
+
+### 13. Discrete version-slab rendering on `Record Version Towers`
+- **Today in `render.js`:** Each tower in `Record Version Towers` is drawn as a
+  single solid-coloured box of height `0.5 + t.versions * 0.28` that shifts
+  uniformly from blue to amber to red as `t.versions` grows.
+- **Improvement:** Render each record version as a stacked horizontal slab (like
+  floors of a skyscraper), colouring the primary head version cyan/blue,
+  visible snapshot back-versions (`tx >= OIT`) amber, and dead unreachable
+  back-versions (`tx < OIT`) crimson. When cooperative GC or the sweeper cleans
+  a table, the dead bottom slabs visibly crumble/dissolve while live slabs
+  settle down.
+
+### 14. On-canvas subsystem micro-visualisations (`btr`, `sort`, `lock`, `cache`)
+- **Today in `render.js`:** Several key districts (`B-Tree Gardens`, `Sort Yard`,
+  `Lock Manager Tower`) are rendered as static decorative roofs whose visual
+  state barely changes under load.
+- **Improvement:**
+  - **`B-Tree Gardens` (`btr`):** Draw a glowing root → internal → leaf node
+    fanout tree on the garden terrace that lights up the traversed path whenever
+    a `SELECT` particle performs an index lookup (and flashes an index-split
+    pulse on heavy `UPDATE`/`INSERT` traffic).
+  - **`Sort Yard` (`sort`):** Render merge-sort run stacks in the yard; when
+    concurrent sorts exceed `TempCacheLimit`, draw an animated spill chute sending
+    temporary run blocks down to `Disk & OS Cache` (`pio`).
+  - **`Lock Manager Tower` (`lock`):** Render waiting writer particles orbiting
+    or queued in holding bays around the tower base, and draw glowing red
+    wait-for arcs between contending transactions when a deadlock cycle forms.
+  - **`Page Cache Plaza` (`cache`):** Overlay LRU heat borders on hot slots, a
+    pin icon on buffers currently held by an active cursor, and brief precedence
+    arcs between dirty slots when `flushDirty` writes ordered pages to `pio`.
+
+### 15. Particle motion trails, shape encoding, and topological depth sorting
+- **Today in `render.js`:**
+  - Queries are plain circles distinguished only by fill colour (`SELECT` blue,
+    `UPDATE` orange, `ROLLBACK` red), which is harder to distinguish under
+    colour-vision deficiency or at high `Time warp` (`2×` / `4×`).
+  - `collectDrawables()` sorts buildings and particles by a single scalar sum
+    (`key = x + w + y + d`), which can occasionally cause particles on adjacent
+    roads to clip through elongated building facades (`Transaction Hall` or
+    `Page Cache Plaza`).
+- **Improvement:**
+  - Give particles short tapered motion tails and distinct silhouettes / badges
+    (circle for `SELECT`, diamond/chevron for `UPDATE`, hollow ring for
+    `Sweep`, X-burst for `ROLLBACK` / deadlock abort).
+  - Use an isometric interval / topological depth sort so road particles never
+    clip behind buildings that are geometrically behind them.
+
+---
+
+## Part 4 — Interface & UX (`js/ui.js`, `css/style.css`)
+
+### 16. Unified right-hand inspector drawer & collision-free dock layout
+- **Today in `ui.js` & `style.css`:**
+  - `#info-panel` and `#decide-dock` both anchor at `top: 60px; right: 12px` and
+    forcibly close each other when opened, so you cannot read a building's
+    `src/jrd/` notes while evaluating an Operator Decision.
+  - `#latency-dock` (`left: 12px; bottom: 46px`) overlaps the bottom of
+    `#controls` (`top: 60px; left: 12px`) on viewports shorter than ~820 px.
+- **Improvement:** Consolidate the right-hand overlays into a docked,
+  collapsible inspector rail with tabs (**District Info**, **Decisions**,
+  **Latency**, **Trace**) and allow panels to stack cleanly without covering
+  `#controls` or the city center.
+
+### 17. Selectable query trace profiles & step-by-step replay controls
+- **Today in `ui.js`:** Clicking **Trace** (`#btn-trace`) always spawns a
+  generic `UPDATE` (`spawnQuery(s, true)`) with `deadlock = false`, and the
+  trace bar only follows the particle in real time until it exits.
+- **Improvement:**
+  - Add a trace selector dropdown next to **Trace**:
+    - *`SELECT` (Index lookup via `B-Tree Gardens`)*
+    - *`SELECT` (Natural scan + `Sort Yard` merge)*
+    - *`UPDATE` (Cache miss + dirty-page mark + TIP commit)*
+    - *`UPDATE` (Lock wait / deadlock rollback at `Lock Manager Tower`)*
+  - Add **Step back / Step forward / Pause at next district** buttons on the
+    `#trace-bar` so learners can freeze the city at each stage of a query's life
+    and click directly into that building's C++ source references.
+
+### 18. Expandable time-series telemetry drawer & hover readouts
+- **Today in `ui.js`:** The bottom `#stats` bar draws three `64×18` px
+  sparklines (`#sp-qps`, `#sp-hit`, `#sp-vers`) with no axis labels, hover
+  values, or correlation view.
+- **Improvement:** Allow clicking any metric in `#stats` to expand a
+  time-series telemetry drawer plotting synchronized 3-minute histories of
+  **QPS**, **Cache hit %**, **OIT / OAT / OST gap**, **Total record versions**,
+  and **p50 / p95 latency**, complete with vertical markers showing where a
+  scenario started, a sweep ran, or an Operator Decision was applied.
+
+### 19. One-click "Copy shareable link" button & live URL sync
+- **Today in `ui.js`:** `applyDeepLink()` supports rich URL parameters
+  (`?scenario=...&theme=...&warp=...&panel=...&dock=...&lock=1`), and the
+  machine room supports `?seq=...`, but there is no button in the UI to export
+  the current simulation state as a shareable link.
+- **Improvement:** Add a **Share / Copy link** button in `#topbar` that serialises
+  the active scenario, theme, time warp, open dock/panel, and slider overrides
+  into the URL (`history.replaceState`) and copies it to the clipboard with a
+  toast confirmation.
+
+### 20. District quick-jump bar & responsive mobile bottom-sheet layout
+- **Today in `style.css`:** On narrow/tablet screens (`< 900 px`), `#topbar nav`
+  and `#stats` wrap into multiple rows, leaving a cramped viewport between the
+  floating `#controls` and `#info-panel` overlays.
+- **Improvement:**
+  - Add a compact keyboard/click **District jump bar** (`1–9` hotkeys or pill
+    strip) that smoothly pans and zooms the camera to any of the 15 engine
+    buildings.
+  - On narrow viewports, collapse `#controls` and `#info-panel` into swipeable
+    bottom sheets so the isometric canvas keeps full screen height.
+
