@@ -34,6 +34,7 @@ var Sim = (function () {
       // MVCC towers
       tables: [],
       totalVersions: 0,
+      backversionReads: 0,   // MON$BACKVERSION_READS: delta steps walked by queries
 
       // page cache: slots of {page, lastUse, flash, state}
       cache: [],
@@ -269,15 +270,37 @@ var Sim = (function () {
     s.oit = Math.min(rbFloor, s.ost);
   }
 
-  function coopGC(s) {
-    // a reader tidies one chain it walked through, if older than OST
+  function coopGC(s, tableIdx) {
+    // a reader tidies the chain it walked through, if older than OST
     if (holder(s) !== null) return;
-    var t = s.tables[Math.floor(Math.random() * TABLE_COUNT)];
+    var idx = (tableIdx !== undefined && tableIdx !== null)
+      ? tableIdx : Math.floor(Math.random() * TABLE_COUNT);
+    var t = s.tables[idx];
     if (t.versions > 1 && t.chain[0] < s.ost) {
       t.chain.shift();
       t.versions--;
       s.totalVersions--;
       t.flash = 0.6;
+    }
+  }
+
+  /* VIO_chase_record_version (src/jrd/vio.cpp): every query touching a row
+   * with back versions must walk the delta chain to reconstruct or verify a
+   * snapshot-visible version, fetching extra data pages when deep chains
+   * spill off-page. */
+  function chaseVersionChain(s, q, t) {
+    var back = t.versions - 1;
+    if (back <= 0) return;
+    s.backversionReads += back;
+    q.dwell += back * 0.025;
+    t.flash = Math.max(t.flash, 0.45);
+    var offPage = Math.floor(back / 5);
+    var missed = false;
+    for (var i = 0; i < offPage; i++) {
+      if (!cacheAccess(s, false)) missed = true;
+    }
+    if (missed) {
+      q.path.splice(q.idx + 1, 0, wp("pio", 0.16));
     }
   }
 
@@ -291,6 +314,7 @@ var Sim = (function () {
   function spawnQuery(s, traced) {
     var isUpdate = traced ? true : Math.random() < s.updateRatio;
     var reads = traced ? 2 : 1 + Math.floor(Math.random() * 3);
+    var tableIdx = Math.floor(Math.random() * TABLE_COUNT);
     var path = [
       wp("harbor", 0.05),
       wp("yvalve", 0.12),
@@ -307,9 +331,12 @@ var Sim = (function () {
       path.push(wp("mvcc", 0.18, "version"));
       path.push(wp("cache", 0.08, "wpage"));
       path.push(wp("tra", 0.12, "commit"));
-    } else if (Math.random() < 0.45) {
-      var useIndex = Math.random() < 0.5;
-      path.push(useIndex ? wp("btr", 0.15) : wp("sort", 0.15, "sort"));
+    } else {
+      path.push(wp("mvcc", 0.04, "rversion"));
+      if (Math.random() < 0.45) {
+        var useIndex = Math.random() < 0.5;
+        path.push(useIndex ? wp("btr", 0.15) : wp("sort", 0.15, "sort"));
+      }
     }
     path.push(wp("exec", 0.08));
     path.push(wp("yvalve", 0.06, "result"));
@@ -320,6 +347,7 @@ var Sim = (function () {
       path: path, idx: 0, dwell: 0.05,
       speed: traced ? 8 : 12 + Math.random() * 5,
       kind: isUpdate ? "update" : "select",
+      table: tableIdx,
       phase: "sql",           // sql -> blr -> result
       txn: null,
       snap: null,             // OAT when this query's transaction started
@@ -376,13 +404,19 @@ var Sim = (function () {
       case "page":
         if (cacheAccess(s, false)) {
           if (q.traced) s.traceNote = "hit";
-          if (Math.random() < 0.35) coopGC(s);
+          if (Math.random() < 0.35) coopGC(s, q.table);
         } else {
           if (q.traced) s.traceNote = "miss";
           // miss: detour down to the database file and back
           q.path.splice(q.idx + 1, 0, wp("pio", 0.22), wp("cache", 0.05));
         }
         break;
+      case "rversion": {
+        var rt = s.tables[q.table !== undefined ? q.table : Math.floor(Math.random() * TABLE_COUNT)];
+        chaseVersionChain(s, q, rt);
+        if (Math.random() < 0.45) coopGC(s, q.table);
+        break;
+      }
       case "wpage": {
         var wHit = cacheAccess(s, true);
         if (q.traced) s.traceNote = wHit ? "hit" : "miss";
@@ -422,7 +456,8 @@ var Sim = (function () {
         }
         break;
       case "version": {
-        var t = s.tables[Math.floor(Math.random() * TABLE_COUNT)];
+        var t = s.tables[q.table !== undefined ? q.table : Math.floor(Math.random() * TABLE_COUNT)];
+        chaseVersionChain(s, q, t);
         if (t.versions < MAX_CHAIN) {
           t.chain.push(q.txn);
           t.versions++;

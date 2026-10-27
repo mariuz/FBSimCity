@@ -507,7 +507,7 @@ var UI = (function () {
     diskRead: "Disk reads (cache misses)",
     sortSpill: "Sorting (incl. spills)",
     lockWait: "Lock waits",
-    version: "Writing a record version",
+    version: "Record versions (write + chain walk)",
     commit: "Commit (TIP + forced write)",
     repl: "Replication send (sync only)",
     travel: "Everything else in flight"
@@ -696,7 +696,9 @@ var UI = (function () {
     for (var i = 1; i < s.tables.length; i++) {
       if (s.tables[i].chain.length > t.chain.length) t = s.tables[i];
     }
-    var html = "<h3>Busiest table — live version chain</h3>";
+    var html = "<h3>Busiest table — live version chain</h3>" +
+      "<p class='fine'>Back-version reads (<code>MON$BACKVERSION_READS</code>): <b>" +
+      s.backversionReads + "</b></p>";
     var chain = t.chain, shown = Math.min(chain.length, 10);
     for (var j = 0; j < shown; j++) {
       var idx = chain.length - 1 - j; // newest first
@@ -859,6 +861,7 @@ var UI = (function () {
     var vEl = $("st-vers");
     vEl.textContent = s.totalVersions;
     cls(vEl, s.totalVersions > 60 ? "bad" : s.totalVersions > 25 ? "warn" : "good");
+    if ($("st-bvreads")) $("st-bvreads").textContent = s.backversionReads;
     $("st-locks").textContent = s.lockWaits;
     $("st-rb").textContent = s.rollbacks;
     $("st-dirty").textContent = s.dirtyEvictions;

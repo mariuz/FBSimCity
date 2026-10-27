@@ -93,7 +93,7 @@ hit ratio, delta size) are measured from the run, not written in advance.
 | evictions | LRU frames reused | **real** |
 | evictions (dirty) | Evictions that had to write the page out first | **real** — a dirty eviction makes a reader pay for someone else's write |
 | Next / OAT / OST / OIT | Transaction id counters (`Next`, Oldest Active, Oldest Snapshot, Oldest Interesting) | **real** arithmetic, **scaled** ids (`OIT` stays pinned at the earliest unswept rolled-back transaction until sweep finishes its pass; `OST` tracks the oldest active snapshot horizon) |
-| stale versions | Record versions beyond the current one, summed over 12 tables | **scaled** — 12 tables, chains capped at 26 for display |
+| stale versions (walks) | Record versions beyond the current one summed over 12 tables, plus cumulative `MON$BACKVERSION_READS` delta steps walked | **real** mechanism, **scaled** counts — 12 tables, chains capped at 26 for display; deep chains slow down readers via `VIO_chase_record_version` |
 | lock waits | Writers that queued at the lock manager | **modeled** — a fixed 22% chance of contention per write, not a real lock table |
 | deadlock rollbacks | Waiters chosen as deadlock victims | **modeled** — 6% of waits, not a real wait-for graph |
 | backup | Current backup state, or the completed level chain | **real** |

@@ -34,7 +34,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   `oit` only when sweep finishes (or when no rollbacks occurred in the gap);
   trigger automatic sweep from `ost − oit >= sweepInterval`.
 
-### 2. Back-version chain traversal cost for readers (`VIO_chase_record_version`)
+### 2. [x] Back-version chain traversal cost for readers (`VIO_chase_record_version`) — *Completed*
 - **Today in `sim.js`:** A pinned OIT grows the `Record Version Towers` and
   paints them red, but a `SELECT` particle pays the same dwell time and page
   fetches against a 26-version chain as against a 1-version chain. As a result,

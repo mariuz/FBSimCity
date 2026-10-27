@@ -184,6 +184,21 @@
       Sim.latencyProfile(sy).mean.repl > 0);
     t.eq("asynchronous replication costs the commit no wait",
       Sim.latencyProfile(as).mean.repl, 0);
+
+    // a pinned OIT with deep version chains must measurably slow down
+    // back-version chain traversal (VIO_chase_record_version)
+    var clean = Sim.create(); clean.queryRate = 12; clean.updateRatio = 0.4;
+    var bloated = Sim.create(); bloated.queryRate = 12; bloated.updateRatio = 0.4;
+    Sim.setLongTxn(bloated, true);
+    run(clean, 60); run(bloated, 60);
+    var pClean = Sim.latencyProfile(clean), pBloated = Sim.latencyProfile(bloated);
+    t.ok("a stuck OIT increases back-version reads (MON$BACKVERSION_READS)",
+      bloated.backversionReads > clean.backversionReads,
+      "bloated " + bloated.backversionReads + " vs clean " + clean.backversionReads);
+    t.ok("deep version chains increase record-version traversal latency",
+      pBloated.mean.version > pClean.mean.version,
+      "bloated " + pBloated.mean.version.toFixed(3) +
+      "s vs clean " + pClean.mean.version.toFixed(3) + "s");
   }
 
   // ---- 2b. the version is stated in two places; they must agree --------
@@ -580,7 +595,8 @@
   function finiteState(s) {
     var bad = [];
     var nums = {
-      totalVersions: s.totalVersions, next: s.next, oat: s.oat, ost: s.ost, oit: s.oit,
+      totalVersions: s.totalVersions, backversionReads: s.backversionReads,
+      next: s.next, oat: s.oat, ost: s.ost, oit: s.oit,
       hitRatio: s.hitRatio, evictions: s.evictions,
       dirtyEvictions: s.dirtyEvictions, pageWrites: s.pageWrites,
       lockWaits: s.lockWaits, rollbacks: s.rollbacks,
@@ -914,6 +930,8 @@
       txt("st-qps"), s.qps.toFixed(1));
     t.eq("the version total matches the model",
       txt("st-vers"), String(s.totalVersions));
+    t.eq("the back-version reads readout matches the model",
+      txt("st-bvreads"), String(s.backversionReads));
     t.eq("the OIT readout matches the model", txt("st-oit"), String(s.oit));
     t.eq("the OST readout matches the model", txt("st-ost"), String(s.ost));
     t.eq("the OAT readout matches the model", txt("st-oat"), String(s.oat));
