@@ -190,6 +190,10 @@ var UI = (function () {
       function (v) { return v + " pages"; });
     bindRange("ctl-tempcache", function (v) { sim.tempCacheLimit = +v; },
       function (v) { return v + " units"; });
+    if ($("ctl-stmtcache")) {
+      bindRange("ctl-stmtcache", function (v) { Sim.setStmtCacheRatio(sim, +v / 100); },
+        function (v) { return +v === 0 ? "off" : v + "% hit"; });
+    }
     bindRange("ctl-sweepint", function (v) { sim.sweepInterval = +v; },
       function (v) { return v + " txns"; });
 
@@ -727,7 +731,15 @@ var UI = (function () {
       { id: "act-setstats", label: "SET STATISTICS INDEX (recompute)",
         fn: function (s) { Sim.recomputeStatistics(s); } },
       { id: "act-degradestats", label: "Simulate stale RDB$STATISTICS",
-        fn: function (s) { Sim.degradeStatistics(s); } }
+        fn: function (s) { Sim.degradeStatistics(s); } },
+      { id: "act-stmtcache", label: function (s) {
+          return s.stmtCacheRatio > 0
+            ? "Statement cache: " + Math.round(s.stmtCacheRatio * 100) + "% (turn off)"
+            : "Enable statement cache (80% hit)";
+        }, fn: function (s) {
+          var next = s.stmtCacheRatio > 0 ? 0 : 80;
+          setRange("ctl-stmtcache", next);
+        } }
     ],
     btr: [
       { id: "act-setstats-btr", label: "SET STATISTICS INDEX (recompute)",
@@ -850,7 +862,8 @@ var UI = (function () {
     var html = "<h3>Optimizer plans &amp; <code>RDB$STATISTICS</code></h3>" +
       "<p class='fine'>Index scans: <b>" + s.indexScans +
       "</b> &middot; Natural + Sort: <b>" + s.naturalScans +
-      "</b> &middot; <code>SET STATISTICS</code> runs: <b>" + s.statsRecomputed + "</b></p>";
+      "</b> &middot; <code>SET STATISTICS</code> runs: <b>" + s.statsRecomputed +
+      "</b> &middot; Statement cache hits: <b>" + s.stmtCacheHits + "</b></p>";
     for (var i = 0; i < Math.min(6, s.tables.length); i++) {
       var t = s.tables[i];
       var eff = Math.min(1, t.selectivity + t.statDrift);

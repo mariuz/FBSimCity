@@ -127,7 +127,7 @@ var Render = (function () {
 
   // ---------------------------------------------------------------------
 
-  function drawGround(ctx, cam, cw, ch) {
+  function drawGround(ctx, cam, cw, ch, s) {
     // backdrop
     var g = ctx.createLinearGradient(0, 0, 0, ch);
     g.addColorStop(0, T.bgTop);
@@ -185,6 +185,30 @@ var Render = (function () {
       ctx.stroke();
     });
     ctx.setLineDash([]);
+
+    // Prepared statement cache expressway (Y-Valve -> Execution Hall)
+    if (s && s.stmtCacheRatio > 0) {
+      var yv = FB.stations.yvalve, ex = FB.stations.exec;
+      var pYv = proj(cam, yv.x, yv.y, 0);
+      var pEx = proj(cam, ex.x, ex.y, 0);
+      ctx.save();
+      ctx.strokeStyle = "rgba(192,132,252," + (0.28 + s.stmtCacheRatio * 0.48) + ")";
+      ctx.lineWidth = Math.max(1.5, 4 * cam.zoom);
+      ctx.setLineDash([7 * cam.zoom, 5 * cam.zoom]);
+      ctx.beginPath();
+      ctx.moveTo(pYv[0], pYv[1]);
+      ctx.lineTo(pEx[0], pEx[1]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (cam.zoom > 0.6) {
+        var pMid = proj(cam, (yv.x + ex.x) / 2, (yv.y + ex.y) / 2 + 1.1, 0);
+        ctx.fillStyle = "#c084fc";
+        ctx.font = (9.5 * Math.min(cam.zoom, 1.3)) + "px 'Segoe UI', sans-serif";
+        ctx.fillText("StatementCache (" + Math.round(s.stmtCacheRatio * 100) + "%)",
+          pMid[0], pMid[1]);
+      }
+      ctx.restore();
+    }
   }
 
   function drawCachePlaza(ctx, cam, s) {
@@ -609,7 +633,7 @@ var Render = (function () {
   }
 
   function draw(ctx, cam, s, cw, ch, hoverId, selectedId, time) {
-    drawGround(ctx, cam, cw, ch);
+    drawGround(ctx, cam, cw, ch, s);
     drawStorage(ctx, cam, s);
     drawDelta(ctx, cam, s);
     drawReplica(ctx, cam, s);

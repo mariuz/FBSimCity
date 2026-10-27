@@ -117,7 +117,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
 
 ## Part 2 — Simulation & Interactive Features
 
-### 8. Prepared statement cache (`StatementCacheSize`)
+### 8. [x] Prepared statement cache (`StatementCacheSize`) — *Completed*
 - **Why:** Currently every particle walks `Lexer → Parser → BLR Generator →
   Compiler & Optimizer`, so `Parse & compile` takes ~47% of every query's work
   time. Since Firebird 3.0+ (and `firebird-wasm`'s 64-entry statement cache and

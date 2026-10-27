@@ -69,7 +69,8 @@
       { id: "ctl-scenario", doc: "Scenario" },
       { id: "ctl-replmode", doc: "Replication mode" },
       { id: "ctl-replhealth", doc: "Replica health" },
-      { id: "ctl-tempcache", doc: "Sort memory" }
+      { id: "ctl-tempcache", doc: "Sort memory" },
+      { id: "ctl-stmtcache", doc: "Statement cache" }
     ];
     controls.forEach(function (c) {
       t.ok("control #" + c.id + " exists", !!document.getElementById(c.id));
@@ -218,6 +219,23 @@
       isoSnap.updateConflicts > 0 && isoSnap.rollbacks > isoRc.rollbacks,
       "updateConflicts=" + isoSnap.updateConflicts + ", rollbacks=" + isoSnap.rollbacks +
       " vs rc rollbacks=" + isoRc.rollbacks);
+
+    // Prepared statement cache (StatementCacheSize):
+    // Hitting the compiled statement cache bypasses DSQL/CMP and collapses
+    // Parse & compile latency
+    var scOff = Sim.create(), scOn = Sim.create();
+    scOff.queryRate = 12; scOff.updateRatio = 0.35;
+    scOn.queryRate = 12; scOn.updateRatio = 0.35;
+    Sim.setStmtCacheRatio(scOn, 0.9);
+    run(scOff, 40); run(scOn, 40);
+    t.ok("statement cache records hits when enabled",
+      scOn.stmtCacheHits > 0 && scOff.stmtCacheHits === 0,
+      "scOn=" + scOn.stmtCacheHits + ", scOff=" + scOff.stmtCacheHits);
+    t.ok("statement cache measurably cuts Parse & compile latency",
+      Sim.latencyProfile(scOn).mean.compile <
+      Sim.latencyProfile(scOff).mean.compile * 0.35,
+      "scOn " + Sim.latencyProfile(scOn).mean.compile.toFixed(3) +
+      "s vs scOff " + Sim.latencyProfile(scOff).mean.compile.toFixed(3) + "s");
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------
@@ -707,7 +725,7 @@
       indexScans: s.indexScans, naturalScans: s.naturalScans,
       statsRecomputed: s.statsRecomputed,
       commitNumber: s.commitNumber, writeRestarts: s.writeRestarts,
-      updateConflicts: s.updateConflicts,
+      updateConflicts: s.updateConflicts, stmtCacheHits: s.stmtCacheHits,
       time: s.time
     };
     Object.keys(nums).forEach(function (k) {
@@ -757,6 +775,7 @@
               Sim.setForcedWrites(s, (cases % 4) !== 0);
               Sim.setLockMode(s, (cases % 2) ? "wait" : "nowait");
               Sim.setIsolationMode(s, (cases % 3) ? "read_consistency" : "snapshot");
+              Sim.setStmtCacheRatio(s, (cases % 2) ? 0.8 : 0);
               Sim.setGcPolicy(s, ["combined", "cooperative", "background"][cases % 3]);
               if (cases % 5 === 0) Sim.setLongTxn(s, true);
               if (cases % 7 === 0) Sim.toggleLock(s);

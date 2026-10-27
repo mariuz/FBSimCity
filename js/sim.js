@@ -73,6 +73,8 @@ var Sim = (function () {
       tempCacheLimit: 40,
       sorts: 0, sortSpills: 0,
       indexScans: 0, naturalScans: 0, statsRecomputed: 0,
+      stmtCacheRatio: 0,     // StatementCacheSize hit ratio (0..1)
+      stmtCacheHits: 0,      // compiled statements reused without DSQL/CMP parse
 
       // where completed queries actually spent their time, sampled over the
       // last LAT_SAMPLE trips rather than asserted
@@ -585,16 +587,28 @@ var Sim = (function () {
     var firstTable = (isUpdate && !traced && Math.random() < 0.65)
       ? ((tableIdx + 1 + Math.floor(Math.random() * 2)) % 3)
       : tableIdx;
-    var path = [
-      wp("harbor", 0.05),
-      wp("yvalve", 0.12),
-      wp("lexer", 0.15),
-      wp("parser", 0.2),
-      wp("blrgen", 0.15, "blr"),
-      wp("security", 0.08),
-      wp("cmp", 0.25, "compile"),
-      wp("exec", 0.15, "execstart")
-    ];
+    var stmtCached = !traced && s.stmtCacheRatio > 0 &&
+      Math.random() < s.stmtCacheRatio;
+    var path;
+    if (stmtCached) {
+      s.stmtCacheHits++;
+      path = [
+        wp("harbor", 0.05),
+        wp("yvalve", 0.08, "stmtcache"),
+        wp("exec", 0.12, "execstart")
+      ];
+    } else {
+      path = [
+        wp("harbor", 0.05),
+        wp("yvalve", 0.12),
+        wp("lexer", 0.15),
+        wp("parser", 0.2),
+        wp("blrgen", 0.15, "blr"),
+        wp("security", 0.08),
+        wp("cmp", 0.25, "compile"),
+        wp("exec", 0.15, "execstart")
+      ];
+    }
     for (var i = 0; i < reads; i++) path.push(wp("cache", 0.1, "page"));
     if (isUpdate) {
       path.push(wp("lock", 0.12, "lock"));
@@ -615,7 +629,9 @@ var Sim = (function () {
       kind: isUpdate ? "update" : "select",
       table: tableIdx,
       firstTable: firstTable,
+      stmtCached: stmtCached,
       needsPlan: !isUpdate && Math.random() < 0.55,
+      planApplied: false,
       plan: isUpdate ? "INDEX+UPD" : "NATURAL",
       locksHeld: [],
       waitingOn: -1,
@@ -659,6 +675,30 @@ var Sim = (function () {
     refreshMarkers(s);
   }
 
+  function applySelectPlan(s, q) {
+    if (!q.needsPlan || q.planApplied) return;
+    q.planApplied = true;
+    var ot = s.tables[q.table !== undefined ? q.table : 0];
+    var sel = Math.min(1, ot.selectivity + ot.statDrift);
+    var rvIdx = -1;
+    for (var pi = q.idx + 1; pi < q.path.length; pi++) {
+      if (q.path[pi].act === "rversion") { rvIdx = pi; break; }
+    }
+    if (rvIdx >= 0) {
+      if (sel < 0.12) {
+        q.plan = "INDEX";
+        s.indexScans++;
+        q.path.splice(rvIdx + 1, 0, wp("btr", 0.14, "btr"));
+      } else {
+        q.plan = "NATURAL+SORT";
+        s.naturalScans++;
+        q.path.splice(rvIdx + 1, 0,
+          wp("cache", 0.08, "page"),
+          wp("sort", 0.15, "sort"));
+      }
+    }
+  }
+
   function arrive(s, q) {
     var step = q.path[q.idx];
     if (q.traced) {
@@ -674,37 +714,17 @@ var Sim = (function () {
 
     switch (step.act) {
       case "blr":
+      case "stmtcache":
         q.phase = "blr";
         break;
-      case "compile": {
+      case "compile":
         // Cost-based optimizer (src/jrd/opt.cpp): inspect cached index
         // selectivity (RDB$STATISTICS = selectivity + statDrift) on q.table.
-        // Selective indexes (< 0.12) route to B-Tree Gardens; low-selectivity
-        // or stale-statistic indexes fall back to a natural scan + Sort Yard.
-        if (q.needsPlan) {
-          var ot = s.tables[q.table !== undefined ? q.table : 0];
-          var sel = Math.min(1, ot.selectivity + ot.statDrift);
-          var rvIdx = -1;
-          for (var pi = q.idx + 1; pi < q.path.length; pi++) {
-            if (q.path[pi].act === "rversion") { rvIdx = pi; break; }
-          }
-          if (rvIdx >= 0) {
-            if (sel < 0.12) {
-              q.plan = "INDEX";
-              s.indexScans++;
-              q.path.splice(rvIdx + 1, 0, wp("btr", 0.14, "btr"));
-            } else {
-              q.plan = "NATURAL+SORT";
-              s.naturalScans++;
-              q.path.splice(rvIdx + 1, 0,
-                wp("cache", 0.08, "page"),
-                wp("sort", 0.15, "sort"));
-            }
-          }
-        }
+        applySelectPlan(s, q);
         break;
-      }
       case "execstart":
+        // Cached statements carry a pre-compiled execution plan straight into EXE
+        applySelectPlan(s, q);
         // Firebird 4+ READ COMMITTED READ CONSISTENCY: establish a fresh
         // statement-level commit-order snapshot (CN) when execution starts.
         if (s.isolationMode === "read_consistency") {
@@ -1539,6 +1559,11 @@ var Sim = (function () {
 
   // ---- public API ------------------------------------------------------
 
+  function setStmtCacheRatio(s, ratio) {
+    var r = Math.max(0, Math.min(1, +ratio || 0));
+    s.stmtCacheRatio = r;
+  }
+
   function recomputeStatistics(s) {
     for (var i = 0; i < TABLE_COUNT; i++) {
       s.tables[i].statDrift = 0;
@@ -1661,6 +1686,7 @@ var Sim = (function () {
     tick: tick,
     warm: warm,
     setCacheSize: setCacheSize,
+    setStmtCacheRatio: setStmtCacheRatio,
     recomputeStatistics: recomputeStatistics,
     degradeStatistics: degradeStatistics,
     setIsolationMode: setIsolationMode,
