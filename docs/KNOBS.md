@@ -21,8 +21,8 @@ Three honesty levels:
 | Write mix | 0–100% | Share of queries that take a lock, write a version and commit | **real** — the read/write split drives everything downstream |
 | Page cache | 16–128 buffers | Size of the LRU buffer cache | **scaled** — Firebird's default is 2048 pages; the hot set here is 40 pages, so 64 covers it and 16 thrashes |
 | Sort memory | 8–120 units | Firebird's `TempCacheLimit`: sorts that fit run in memory, larger ones spill to temporary files | **real** mechanism, **scaled** units — the spill is genuine disk I/O the query pays for, but the sizes are arbitrary |
-| Sweep interval | 10–60 s | Seconds between automatic sweeps | **modeled** — real sweep is triggered by the OIT/OAT gap crossing the sweep interval (default 20 000 transactions), not by a wall clock |
-| Automatic sweep | on/off | Enables the interval sweep | **real** — corresponds to setting the sweep interval to 0 |
+| Sweep interval | 10–60 txns | `OST − OIT` transaction gap that triggers an automatic sweep | **real** mechanism, **scaled** gap — Firebird's default is 20 000 transactions (`MON$SWEEP_INTERVAL`); shrunk here so a rolled-back transaction triggers a sweep within a minute |
+| Automatic sweep | on/off | Enables the gap-triggered sweep | **real** — corresponds to setting the sweep interval to 0 |
 | Long-running transaction | on/off | Starts a transaction that never commits, pinning the OIT | **real** — this is exactly how a forgotten transaction stalls GC |
 | Rush hour ×60 | button | Injects 60 queries at once | **modeled** — a convenience for watching queueing |
 | Speed | 0.5–4× | Multiplies the simulation timestep | n/a — presentation only |
@@ -92,7 +92,7 @@ hit ratio, delta size) are measured from the run, not written in advance.
 | cache hit | `hits / (hits + misses)` over a 1-second window | **real** formula |
 | evictions | LRU frames reused | **real** |
 | evictions (dirty) | Evictions that had to write the page out first | **real** — a dirty eviction makes a reader pay for someone else's write |
-| Next / OAT / OIT | Transaction id counters | **real** arithmetic, **scaled** ids (they start at 1000, not at whatever your database is at) |
+| Next / OAT / OST / OIT | Transaction id counters (`Next`, Oldest Active, Oldest Snapshot, Oldest Interesting) | **real** arithmetic, **scaled** ids (`OIT` stays pinned at the earliest unswept rolled-back transaction until sweep finishes its pass; `OST` tracks the oldest active snapshot horizon) |
 | stale versions | Record versions beyond the current one, summed over 12 tables | **scaled** — 12 tables, chains capped at 26 for display |
 | lock waits | Writers that queued at the lock manager | **modeled** — a fixed 22% chance of contention per write, not a real lock table |
 | deadlock rollbacks | Waiters chosen as deadlock victims | **modeled** — 6% of waits, not a real wait-for graph |
@@ -131,7 +131,6 @@ has to discover them by reading the source:
   replicas with independent lag, selective replication via
   `RDB$PUBLICATIONS`, journal archiving, and apply errors that stop
   replication until a human intervenes. None of that is here.
-- **Sweep is time-triggered**, not transaction-gap-triggered (see above).
 - **The traced query is spared deadlocks** so the guided walk stays
   predictable. Real transactions enjoy no such courtesy.
 

@@ -112,15 +112,18 @@ var FB = (function () {
     {
       id: "tra", code: "TRA", name: "Transaction Hall",
       x: 34, y: 5, w: 5, d: 4, h: 4.6, color: "#fcc419",
-      short: "TIP pages; Next / OAT / OIT counters.",
+      short: "TIP pages; Next / OAT / OST / OIT counters.",
       desc: "The transaction subsystem hands out transaction IDs and records " +
         "every transaction's state on Transaction Inventory Pages (TIP). " +
-        "Three famous counters live on this hall's facade: Next (the next " +
-        "ID), OAT (Oldest Active Transaction) and OIT (Oldest Interesting " +
-        "Transaction). Garbage collection can only clean record versions " +
-        "older than the OIT — keep a transaction open for hours and the " +
-        "whole city hoards garbage. Firebird 4 replaced state-bitmap " +
-        "snapshots with commit-order snapshots for read consistency."
+        "Four famous counters live on this hall's facade: Next (the next " +
+        "ID), OAT (Oldest Active Transaction), OST (Oldest Snapshot " +
+        "Transaction — the true visibility horizon) and OIT (Oldest " +
+        "Interesting Transaction, pinned at the earliest rolled-back or " +
+        "active transaction until sweep finishes its pass). Automatic sweep " +
+        "fires when OST − OIT reaches the sweep interval — keep a " +
+        "transaction open for hours and the whole city hoards garbage. " +
+        "Firebird 4 replaced state-bitmap snapshots with commit-order " +
+        "snapshots for read consistency."
     },
     {
       id: "lock", code: "LOCK", name: "Lock Manager Tower",

@@ -529,7 +529,7 @@ var Render = (function () {
     if (cam.zoom >= 0.6) {
       ctx.font = "600 " + (10.5 * Math.min(cam.zoom, 1.2)) + "px Consolas, monospace";
       ctx.fillStyle = s.pinned !== null ? T.tipBad : T.tipOk;
-      ctx.fillText("Next " + s.next + "  OAT " + s.oat + "  OIT " + s.oit,
+      ctx.fillText("Next " + s.next + "  OAT " + s.oat + "  OST " + s.ost + "  OIT " + s.oit,
         tp[0], tp[1]);
       if (s.pinned !== null && (calm || Math.floor(time * 2) % 2 === 0)) {
         ctx.fillStyle = T.tipAlert;

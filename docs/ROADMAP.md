@@ -14,7 +14,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
 
 ## Part 1 — Engine Accuracy (`js/sim.js` vs `src/jrd/`)
 
-### 1. Real OIT / OAT / OST progression & gap-triggered sweep (`tra.cpp`, `vio.cpp`)
+### 1. [x] Real OIT / OAT / OST progression & gap-triggered sweep (`tra.cpp`, `vio.cpp`) — *Completed*
 - **Today in `sim.js`:** When no long-running transaction or `gbak` pins the
   markers, `refreshMarkers()` sets `s.oit = s.oat` immediately on every commit,
   and automatic sweep runs on a wall-clock timer (`sweepTimer >= sweepInterval`)

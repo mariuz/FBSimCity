@@ -87,7 +87,7 @@ var UI = (function () {
       label: "Sweep storm",
       set: { rate: 10, writes: 70, cache: 64, sweepint: 10, sweepon: true, longtxn: false },
       focus: "gc", zoom: 1.2,
-      msg: "Heavy writes with an aggressive 10-second sweep interval. The truck barely rests."
+      msg: "Heavy writes with an aggressive 10-transaction sweep interval. The truck barely rests."
     },
     nightlygbak: {
       label: "Nightly gbak on a busy DB",
@@ -191,7 +191,7 @@ var UI = (function () {
     bindRange("ctl-tempcache", function (v) { sim.tempCacheLimit = +v; },
       function (v) { return v + " units"; });
     bindRange("ctl-sweepint", function (v) { sim.sweepInterval = +v; },
-      function (v) { return "every " + v + "s"; });
+      function (v) { return v + " txns"; });
 
     $("ctl-longtxn").addEventListener("change", function () {
       Sim.setLongTxn(sim, this.checked);
@@ -704,6 +704,7 @@ var UI = (function () {
       var cls, label;
       if (j === 0) { cls = "ver-new"; label = "current version"; }
       else if (txn < s.oit) { cls = "ver-dead"; label = "garbage — below OIT " + s.oit; }
+      else if (txn < s.ost) { cls = "ver-dead"; label = "unreachable — below OST " + s.ost; }
       else { cls = "ver-ok"; label = "kept for snapshots ≥ txn " + txn; }
       html += "<div class='chainrow " + cls + "'><span>txn " + txn +
         "</span>" + label + "</div>";
@@ -848,11 +849,12 @@ var UI = (function () {
     $("st-evict").textContent = s.evictions;
     $("st-next").textContent = s.next;
     $("st-oat").textContent = s.oat;
+    if ($("st-ost")) $("st-ost").textContent = s.ost;
     var oitEl = $("st-oit");
     oitEl.textContent = s.oit;
     var pinnedBy = s.pinned !== null ? "txn " + s.pinned
       : s.backup.gbakTxn !== null ? "gbak (txn " + s.backup.gbakTxn + ")" : null;
-    cls(oitEl, pinnedBy ? "bad" : "good");
+    cls(oitEl, pinnedBy ? "bad" : (s.ost - s.oit > 0 ? "warn" : "good"));
     $("st-pin").textContent = pinnedBy ? "⚠ pinned by " + pinnedBy : "";
     var vEl = $("st-vers");
     vEl.textContent = s.totalVersions;

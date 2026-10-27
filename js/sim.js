@@ -19,15 +19,17 @@ var Sim = (function () {
       updateRatio: 0.35,     // fraction of queries that write
       cacheSize: 64,         // page buffers
       sweepEnabled: true,
-      sweepInterval: 25,     // seconds
+      sweepInterval: 25,     // OST − OIT transaction gap threshold
       longTxn: false,
 
       // transaction counters
       next: 1000,
       oat: 999,
+      ost: 999,
       oit: 999,
       pinned: null,          // id of the long-running txn, when active
       active: [],            // ids of in-flight write txns
+      rolledBack: [],        // ids of rolled-back txns awaiting sweep
 
       // MVCC towers
       tables: [],
@@ -109,8 +111,8 @@ var Sim = (function () {
       s.tables.push({ versions: 1, flash: 0, chain: [960 + i] });
     }
     setCacheSize(s, s.cacheSize);
-    say(s, "Database on line. Cache " + s.cacheSize + " pages, sweep every " +
-      s.sweepInterval + "s.");
+    say(s, "Database on line. Cache " + s.cacheSize + " pages, sweep interval " +
+      s.sweepInterval + " txns.");
     return s;
   }
 
@@ -228,8 +230,8 @@ var Sim = (function () {
   }
 
   function oldestVisible(s) {
-    // versions older than this may be garbage collected
-    return s.pinned !== null ? s.pinned : s.next;
+    // versions older than the Oldest Snapshot (OST) may be garbage collected
+    return s.ost;
   }
 
   /* The oldest transaction still holding the markers back. Either the
@@ -244,18 +246,34 @@ var Sim = (function () {
   }
 
   function refreshMarkers(s) {
-    var floor = s.active.length ? Math.min.apply(null, s.active) : s.next;
+    var emptyFloor = s.next > 1000 ? s.next : 999;
+    var floor = s.active.length ? Math.min.apply(null, s.active) : emptyFloor;
     var h = holder(s);
     s.oat = h !== null ? Math.min(h, floor) : floor;
-    // OIT trails OAT; a pinned txn freezes it hard.
-    s.oit = h !== null ? h : s.oat;
+
+    // OST (Oldest Snapshot): the oldest OAT observed when any still-running
+    // transaction started (src/jrd/tra.cpp: tra_oldest_active).
+    var snapFloor = s.oat;
+    for (var i = 0; i < s.particles.length; i++) {
+      var q = s.particles[i];
+      if (!q.dead && q.snap !== null && q.snap !== undefined && q.snap < snapFloor) {
+        snapFloor = q.snap;
+      }
+    }
+    s.ost = snapFloor;
+
+    // OIT (Oldest Interesting): stays pinned at the earliest unswept
+    // rolled-back transaction on the TIP until sweep finishes a full pass
+    // and advances hdr_oldest_transaction up to OST.
+    var rbFloor = s.rolledBack.length ? Math.min.apply(null, s.rolledBack) : s.ost;
+    s.oit = Math.min(rbFloor, s.ost);
   }
 
   function coopGC(s) {
-    // a reader tidies one chain it walked through, if allowed
+    // a reader tidies one chain it walked through, if older than OST
     if (holder(s) !== null) return;
     var t = s.tables[Math.floor(Math.random() * TABLE_COUNT)];
-    if (t.versions > 1) {
+    if (t.versions > 1 && t.chain[0] < s.ost) {
       t.chain.shift();
       t.versions--;
       s.totalVersions--;
@@ -304,18 +322,24 @@ var Sim = (function () {
       kind: isUpdate ? "update" : "select",
       phase: "sql",           // sql -> blr -> result
       txn: null,
+      snap: null,             // OAT when this query's transaction started
       traced: !!traced,
       waiting: false,
       dead: false,
       lat: newLat(),
       latBucket: "travel"
     };
+    var emptyFloor = s.next > 1000 ? s.next : 999;
+    var activeFloor = s.active.length ? Math.min.apply(null, s.active) : emptyFloor;
     if (isUpdate) {
       q.txn = s.next++;
       s.active.push(q.txn);
-      refreshMarkers(s);
+      q.snap = Math.min(activeFloor, q.txn);
+    } else {
+      q.snap = activeFloor;
     }
     s.particles.push(q);
+    refreshMarkers(s);
     return q;
   }
 
@@ -323,8 +347,12 @@ var Sim = (function () {
     if (q.txn === null) return;
     var i = s.active.indexOf(q.txn);
     if (i >= 0) s.active.splice(i, 1);
-    if (rolledBack) s.rollbacks++;
+    if (rolledBack) {
+      s.rollbacks++;
+      if (s.rolledBack.indexOf(q.txn) === -1) s.rolledBack.push(q.txn);
+    }
     q.txn = null;
+    q.snap = null;
     refreshMarkers(s);
   }
 
@@ -404,6 +432,20 @@ var Sim = (function () {
         break;
       }
       case "commit":
+        if (!q.traced && Math.random() < 0.08) {
+          // Statement abort / client ROLLBACK: the version written at VIO
+          // remains on the chain as dead baggage and the TIP marks this
+          // transaction rolled back, pinning the OIT until sweep runs.
+          var wasClean = s.rolledBack.length === 0 && holder(s) === null;
+          var rbTxn = q.txn;
+          finishTxn(s, q, true);
+          q.phase = "rollback";
+          if (wasClean) {
+            say(s, "Transaction " + rbTxn + " rolled back — OIT pinned at " +
+              s.oit + " until sweep.");
+          }
+          break;
+        }
         finishTxn(s, q, false);
         // Forced writes: this update dirtied one page, so its commit takes
         // one page to disk. Dirty evictions stay rare on a healthy database
@@ -412,9 +454,11 @@ var Sim = (function () {
         replicateCommit(s, q);
         break;
       case "result":
+        q.snap = null;
         if (q.phase !== "rollback") q.phase = "result";
         break;
       case "done":
+        q.snap = null;
         q.dead = true;
         s.done++;      // reset every stats window
         s.completed++; // lifetime, so the qps readout can be checked against it
@@ -427,6 +471,7 @@ var Sim = (function () {
   }
 
   function moveParticles(s, dt) {
+    var hadDead = false;
     for (var i = 0; i < s.particles.length; i++) {
       var q = s.particles[i];
       chargeLatency(q, dt);
@@ -443,12 +488,16 @@ var Sim = (function () {
         q.dwell = Math.max(q.dwell, step.dwell);
         q.idx++;
         if (q.idx >= q.path.length) q.dead = true;
+        if (q.dead) hadDead = true;
       } else {
         q.x += dx / dist * move;
         q.y += dy / dist * move;
       }
     }
-    s.particles = s.particles.filter(function (q) { return !q.dead; });
+    if (hadDead) {
+      s.particles = s.particles.filter(function (q) { return !q.dead; });
+      refreshMarkers(s);
+    }
     if (s.tracedQ && s.tracedQ.dead) {
       s.tracedQ = null;
       s.traceStage = null;
@@ -495,24 +544,35 @@ var Sim = (function () {
   function startSweep(s, manual) {
     if (s.sweepActive) return;
     if (holder(s) !== null) {
+      var alreadyBlocked = s.sweepBlocked;
       s.sweepBlocked = true;
-      var why = s.pinned !== null ? "long-running transaction"
-                                  : "gbak's snapshot";
-      say(s, manual ? "Sweep requested — but " + why + " pins the OIT."
-        : "Sweep skipped: " + why + " pins the OIT.");
+      if (manual || !alreadyBlocked) {
+        var why = s.pinned !== null ? "long-running transaction"
+                                    : "gbak's snapshot";
+        say(s, manual ? "Sweep requested — but " + why + " pins the OIT."
+          : "Sweep skipped: " + why + " pins the OIT.");
+      }
       return;
     }
     s.sweepBlocked = false;
     s.sweepActive = true;
     s.sweepProgress = 0;
-    say(s, "Sweep started: demolishing versions older than OIT " + s.oit + ".");
+    var gap = s.ost - s.oit;
+    say(s, manual
+      ? "Sweep started: demolishing versions older than OST " + s.ost +
+        " (OIT " + s.oit + ")."
+      : "Sweep started: OST − OIT gap reached " + gap +
+        " (OIT " + s.oit + " → OST " + s.ost + ").");
   }
 
   function tickSweep(s, dt) {
-    s.sweepTimer += dt;
-    if (s.sweepEnabled && s.sweepTimer >= s.sweepInterval) {
-      s.sweepTimer = 0;
-      startSweep(s, false);
+    refreshMarkers(s);
+    if (holder(s) === null) s.sweepBlocked = false;
+    if (!s.sweepActive && s.sweepEnabled && s.sweepInterval > 0) {
+      if ((s.ost - s.oit) >= s.sweepInterval ||
+          (holder(s) !== null && (s.next - s.oit) >= s.sweepInterval)) {
+        startSweep(s, false);
+      }
     }
     if (!s.sweepActive) return;
     var before = Math.floor(s.sweepProgress * TABLE_COUNT);
@@ -521,15 +581,29 @@ var Sim = (function () {
     for (var i = before; i < upto; i++) {
       var t = s.tables[i];
       if (t.versions > 1) {
-        s.totalVersions -= (t.versions - 1);
-        t.chain = [t.chain[t.chain.length - 1]];
-        t.versions = 1;
-        t.flash = 1;
+        // demolish all back-versions older than the Oldest Snapshot (OST);
+        // always keep the current head version (last entry in t.chain)
+        var head = t.chain[t.chain.length - 1];
+        var kept = [];
+        for (var j = 0; j < t.chain.length - 1; j++) {
+          if (t.chain[j] >= s.ost) kept.push(t.chain[j]);
+        }
+        kept.push(head);
+        var removed = t.versions - kept.length;
+        if (removed > 0) {
+          s.totalVersions -= removed;
+          t.chain = kept;
+          t.versions = kept.length;
+          t.flash = 1;
+        }
       }
     }
     if (s.sweepProgress >= 1.05) {
       s.sweepActive = false;
-      say(s, "Sweep finished. City is clean.");
+      var sweptTo = s.ost;
+      s.rolledBack = s.rolledBack.filter(function (tx) { return tx > sweptTo; });
+      refreshMarkers(s);
+      say(s, "Sweep finished. OIT advanced to " + s.oit + ".");
     }
   }
 

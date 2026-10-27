@@ -258,18 +258,48 @@
       s.totalVersions < pinnedVersions,
       pinnedVersions + " -> " + s.totalVersions);
 
-    // gbak pins the OIT for its run and releases after
+    // gbak pins the OAT / OST / OIT for its run and releases after
     var g = Sim.create();
     g.queryRate = 8; g.updateRatio = 0.5;
-    run(g, 10);
     Sim.startGbak(g);
     var gtxn = g.backup.gbakTxn;
     run(g, 5);
+    t.eq("gbak's snapshot is the OAT while it runs", g.oat, gtxn);
+    t.eq("gbak's snapshot is the OST while it runs", g.ost, gtxn);
     t.eq("gbak's snapshot is the OIT while it runs", g.oit, gtxn);
     Sim.startSweep(g, true);
     t.ok("sweep is blocked by gbak", g.sweepBlocked);
     run(g, 10);
     t.eq("gbak releases the OIT when done", g.backup.gbakTxn, null);
+
+    // idle database (queryRate = 0) never triggers automatic sweep by wall-clock alone
+    var idle = Sim.create();
+    idle.queryRate = 0; idle.sweepEnabled = true; idle.sweepInterval = 10;
+    run(idle, 60);
+    t.ok("idle database with queryRate = 0 never triggers sweep",
+      !idle.sweepActive && idle.log.length === 1);
+
+    // rolled-back transaction pins OIT while OST and OAT advance, and
+    // automatic sweep triggers when OST - OIT >= sweepInterval
+    var gap = Sim.create();
+    gap.queryRate = 0; gap.sweepEnabled = false; gap.sweepInterval = 10;
+    gap.next = 1015; gap.active = []; gap.rolledBack = [1002];
+    Sim.tick(gap, 1 / 60);
+    t.eq("earliest rolled-back transaction pins OIT", gap.oit, 1002);
+    t.eq("OST advances to OAT when no older snapshot is active", gap.ost, 1015);
+    // an in-flight transaction whose snapshot started at 1008 holds OST at 1008 while OAT is 1012
+    gap.active = [1012];
+    gap.particles.push({ x: 0, y: 0, path: [{ x: 0, y: 0, dwell: 5 }], idx: 0, dwell: 5, speed: 1, txn: 1012, snap: 1008, dead: false });
+    Sim.tick(gap, 1 / 60);
+    t.eq("OAT reflects oldest active transaction (1012)", gap.oat, 1012);
+    t.eq("OST reflects oldest snapshot horizon (1008 < OAT 1012)", gap.ost, 1008);
+    gap.particles = []; gap.active = [];
+    gap.sweepEnabled = true;
+    Sim.tick(gap, 1 / 60);
+    t.ok("automatic sweep triggers when OST - OIT >= sweepInterval", gap.sweepActive);
+    run(gap, 5);
+    t.ok("sweep finishes its pass", !gap.sweepActive);
+    t.eq("sweep advances OIT to OST once pass finishes", gap.oit, gap.ost);
 
     // nbackup lock diverts writes to the delta, unlock merges them back
     var n = Sim.create();
@@ -550,7 +580,7 @@
   function finiteState(s) {
     var bad = [];
     var nums = {
-      totalVersions: s.totalVersions, next: s.next, oat: s.oat, oit: s.oit,
+      totalVersions: s.totalVersions, next: s.next, oat: s.oat, ost: s.ost, oit: s.oit,
       hitRatio: s.hitRatio, evictions: s.evictions,
       dirtyEvictions: s.dirtyEvictions, pageWrites: s.pageWrites,
       lockWaits: s.lockWaits, rollbacks: s.rollbacks,
@@ -566,7 +596,9 @@
     if (s.repl.applied > s.repl.generated) {
       bad.push("applied " + s.repl.applied + " > generated " + s.repl.generated);
     }
-    if (s.oit > s.next || s.oat > s.next) bad.push("markers past Next");
+    if (s.oit > s.ost || s.ost > s.oat || s.oat > s.next) {
+      bad.push("markers out of order: " + s.oit + "/" + s.ost + "/" + s.oat + "/" + s.next);
+    }
     if (s.particles.length > 400) bad.push("particles unbounded: " + s.particles.length);
     if (s.lat.samples.length > 256) bad.push("latency sample unbounded");
     s.tables.forEach(function (t, i) {
@@ -731,8 +763,8 @@
     t.ok("warming leaves the version chains capped",
       warm.tables.every(function (tb) { return tb.chain.length <= 26; }));
     t.ok("warming keeps the markers ordered",
-      warm.oit <= warm.oat && warm.oat <= warm.next,
-      warm.oit + " / " + warm.oat + " / " + warm.next);
+      warm.oit <= warm.ost && warm.ost <= warm.oat && warm.oat <= warm.next,
+      warm.oit + " / " + warm.ost + " / " + warm.oat + " / " + warm.next);
 
     // bounds: junk seconds must not spin or explode
     var junk = Sim.warm(Sim.create(), -5);
@@ -883,6 +915,7 @@
     t.eq("the version total matches the model",
       txt("st-vers"), String(s.totalVersions));
     t.eq("the OIT readout matches the model", txt("st-oit"), String(s.oit));
+    t.eq("the OST readout matches the model", txt("st-ost"), String(s.ost));
     t.eq("the OAT readout matches the model", txt("st-oat"), String(s.oat));
     t.eq("the next-transaction readout matches the model",
       txt("st-next"), String(s.next));
