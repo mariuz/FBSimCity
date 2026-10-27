@@ -214,6 +214,29 @@ var Render = (function () {
         ctx.restore();
       }
     }
+    // careful-write precedence arcs (CCH_precedence): parent->child page order
+    if (s.precedenceArcs && s.precedenceArcs.length) {
+      ctx.save();
+      ctx.lineWidth = Math.max(1.2, 1.8 * cam.zoom);
+      for (var k = 0; k < s.precedenceArcs.length; k++) {
+        var arc = s.precedenceArcs[k];
+        if (arc.from >= s.cache.length || arc.to >= s.cache.length) continue;
+        var fx = b.x + 0.8 + (arc.from % cols) * cw;
+        var fy = b.y + 0.8 + Math.floor(arc.from / cols) * chh;
+        var tx = b.x + 0.8 + (arc.to % cols) * cw;
+        var ty = b.y + 0.8 + Math.floor(arc.to / cols) * chh;
+        var pFrom = proj(cam, fx, fy, 0.1);
+        var pTo = proj(cam, tx, ty, 0.1);
+        var pMid = proj(cam, (fx + tx) / 2, (fy + ty) / 2, 0.9);
+        ctx.globalAlpha = Math.max(0, Math.min(1, arc.flash * 0.85));
+        ctx.strokeStyle = "#ffd43b";
+        ctx.beginPath();
+        ctx.moveTo(pFrom[0], pFrom[1]);
+        ctx.quadraticCurveTo(pMid[0], pMid[1], pTo[0], pTo[1]);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
   }
 
   function drawStorage(ctx, cam, s) {
@@ -251,10 +274,12 @@ var Render = (function () {
       ctx.restore();
     }
     if (cam.zoom > 0.55) {
-      ctx.fillStyle = T.pitLabel;
+      ctx.fillStyle = s.forcedWrites === false ? "#ffa94d" : T.pitLabel;
       ctx.font = (10 * Math.min(cam.zoom, 1.3)) + "px 'Segoe UI', sans-serif";
       var lp = proj(cam, b.x + 0.5, b.y + b.d - 0.4, -depth);
-      ctx.fillText("careful writes — no WAL needed", lp[0], lp[1]);
+      ctx.fillText(s.forcedWrites === false
+        ? "careful writes (forced writes OFF — OS-buffered)"
+        : "careful writes (forced writes ON) — no WAL needed", lp[0], lp[1]);
     }
   }
 

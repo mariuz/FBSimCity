@@ -199,6 +199,11 @@ var UI = (function () {
     $("ctl-sweepon").addEventListener("change", function () {
       sim.sweepEnabled = this.checked;
     });
+    if ($("ctl-forcedwrites")) {
+      $("ctl-forcedwrites").addEventListener("change", function () {
+        Sim.setForcedWrites(sim, this.checked);
+      });
+    }
     if ($("ctl-gcpolicy")) {
       $("ctl-gcpolicy").addEventListener("change", function () {
         Sim.setGcPolicy(sim, this.value);
@@ -659,6 +664,16 @@ var UI = (function () {
           return s.pinned !== null ? "Commit the forgotten transaction"
                                    : "Forget to commit a transaction";
         }, fn: function (s) { setCheck("ctl-longtxn", s.pinned === null); } }
+    ],
+    pio: [
+      { id: "act-fw", label: function (s) {
+          return (s.forcedWrites ? "Switch off" : "Switch on") + " forced writes";
+        }, fn: function (s) { setCheck("ctl-forcedwrites", !s.forcedWrites); } }
+    ],
+    cache: [
+      { id: "act-fw-cache", label: function (s) {
+          return (s.forcedWrites ? "Switch off" : "Switch on") + " forced writes";
+        }, fn: function (s) { setCheck("ctl-forcedwrites", !s.forcedWrites); } }
     ]
   };
 

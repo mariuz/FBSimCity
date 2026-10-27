@@ -63,7 +63,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   `combined`) and charge inline cooperative purges to the reader's `version`
   latency bucket and dirty-page marks.
 
-### 4. Careful writes precedence graph & `Forced Writes` switch (`cch.cpp`, `pio`)
+### 4. [x] Careful writes precedence graph & `Forced Writes` switch (`cch.cpp`, `pio`) — *Completed*
 - **Today in `sim.js`:** `flushDirty(s, 1)` flushes the first dirty buffer at
   commit, and forced writes are permanently on.
 - **In Firebird (`src/jrd/cch.cpp`):**

@@ -23,6 +23,7 @@ Three honesty levels:
 | Sort memory | 8–120 units | Firebird's `TempCacheLimit`: sorts that fit run in memory, larger ones spill to temporary files | **real** mechanism, **scaled** units — the spill is genuine disk I/O the query pays for, but the sizes are arbitrary |
 | Sweep interval | 10–60 txns | `OST − OIT` transaction gap that triggers an automatic sweep | **real** mechanism, **scaled** gap — Firebird's default is 20 000 transactions (`MON$SWEEP_INTERVAL`); shrunk here so a rolled-back transaction triggers a sweep within a minute |
 | Automatic sweep | on/off | Enables the gap-triggered sweep | **real** — corresponds to setting the sweep interval to 0 |
+| Forced writes | on/off | Firebird's `MON$FORCED_WRITES` (`gfix -write sync/async`): when on (default), commits flush dirty pages synchronously in careful-write precedence order (`CCH_precedence`); when off, commits return fast in RAM and dirty buffers are flushed periodically | **real** mechanism, **scaled** timings — turning forced writes off cuts commit latency at the cost of dirty-buffer accumulation and crash exposure |
 | GC policy | `combined`, `cooperative`, `background` | Firebird's `GCPolicy`: whether readers purge dead back-versions inline (`cooperative`, charging the reader's `version` latency and marking a cache buffer dirty), flag pages in `gc_record` bitmaps for a background thread (`background`), or both (`combined`) | **real** mechanism, **scaled** rates — `firebird-wasm` sets `cooperative` in the DPB; SuperServer defaults to `combined` |
 | Long-running transaction | on/off | Starts a transaction that never commits, pinning the OIT | **real** — this is exactly how a forgotten transaction stalls GC |
 | Rush hour ×60 | button | Injects 60 queries at once | **modeled** — a convenience for watching queueing |
@@ -121,9 +122,6 @@ has to discover them by reading the source:
   by the write mix, not a cost model.
 - **Page access is a two-tier hot/cold distribution**, not a real access
   pattern derived from tables and indexes.
-- **Careful writes are asserted, not ordered.** The excavation is labeled
-  "careful writes" and no WAL exists — correct — but the model does not
-  maintain a page precedence graph.
 - **Commit-order snapshots (Firebird 4+) are not modeled.** Visibility here
   is a simple `txn < OIT` comparison.
 - **One database, one attachment pool, no Classic/Super distinction**, no

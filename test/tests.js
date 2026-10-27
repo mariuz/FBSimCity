@@ -61,6 +61,7 @@
       { id: "ctl-cache", doc: "Page cache" },
       { id: "ctl-sweepint", doc: "Sweep interval" },
       { id: "ctl-sweepon", doc: "Automatic sweep" },
+      { id: "ctl-forcedwrites", doc: "Forced writes" },
       { id: "ctl-gcpolicy", doc: "GC policy" },
       { id: "ctl-longtxn", doc: "Long-running transaction" },
       { id: "ctl-scenario", doc: "Scenario" },
@@ -142,6 +143,21 @@
       Sim.latencyProfile(gcCoop).mean.version > Sim.latencyProfile(gcBg).mean.version,
       "coop " + Sim.latencyProfile(gcCoop).mean.version.toFixed(3) +
       "s vs bg " + Sim.latencyProfile(gcBg).mean.version.toFixed(3) + "s");
+
+    // Forced writes & careful-write precedence graph (CCH_precedence):
+    // forcedWrites=true flushes synchronously at commit (higher commit latency
+    // and ordered precedence flushes), while forcedWrites=false returns fast
+    var fwOn = Sim.create(), fwOff = Sim.create();
+    fwOn.queryRate = 12; fwOn.updateRatio = 0.85;
+    fwOff.queryRate = 12; fwOff.updateRatio = 0.85;
+    Sim.setForcedWrites(fwOff, false);
+    run(fwOn, 45); run(fwOff, 45);
+    t.ok("careful-write precedence graph orders dependent page flushes",
+      fwOn.precedenceFlushes > 0, "precedenceFlushes=" + fwOn.precedenceFlushes);
+    t.ok("forced writes ON costs more commit latency than forced writes OFF",
+      Sim.latencyProfile(fwOn).mean.commit > Sim.latencyProfile(fwOff).mean.commit,
+      "fwOn " + Sim.latencyProfile(fwOn).mean.commit.toFixed(3) +
+      "s vs fwOff " + Sim.latencyProfile(fwOff).mean.commit.toFixed(3) + "s");
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------
@@ -620,7 +636,7 @@
     var bad = [];
     var nums = {
       totalVersions: s.totalVersions, backversionReads: s.backversionReads,
-      purges: s.purges,
+      purges: s.purges, precedenceFlushes: s.precedenceFlushes,
       next: s.next, oat: s.oat, ost: s.ost, oit: s.oit,
       hitRatio: s.hitRatio, evictions: s.evictions,
       dirtyEvictions: s.dirtyEvictions, pageWrites: s.pageWrites,
@@ -673,6 +689,7 @@
               // stir in the other controls too
               s.tempCacheLimit = (cases % 2) ? 8 : 120;
               s.sweepEnabled = (cases % 3) !== 0;
+              Sim.setForcedWrites(s, (cases % 4) !== 0);
               Sim.setGcPolicy(s, ["combined", "cooperative", "background"][cases % 3]);
               if (cases % 5 === 0) Sim.setLongTxn(s, true);
               if (cases % 7 === 0) Sim.toggleLock(s);

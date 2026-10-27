@@ -54,8 +54,12 @@ var Sim = (function () {
       // run control
       paused: false, speed: 1,
 
-      // cache bookkeeping
+      // cache bookkeeping & careful-writes precedence (src/jrd/cch.cpp)
       evictions: 0, dirtyEvictions: 0, pageWrites: 0,
+      forcedWrites: true,    // MON$FORCED_WRITES: sync commit flush vs OS-buffered
+      precedenceFlushes: 0,  // parent->child ordered flushes via CCH_precedence
+      precedenceArcs: [],    // [{from, to, flash}] drawn over Page Cache Plaza
+      flushAcc: 0,
 
       // sort memory (Firebird's TempCacheLimit): sorts larger than this
       // spill to temporary files on disk
@@ -150,10 +154,72 @@ var Sim = (function () {
   function setCacheSize(s, n) {
     s.cacheSize = n;
     s.cache = [];
+    if (s.precedenceArcs) s.precedenceArcs = [];
     for (var i = 0; i < n; i++) {
-      // state drives the flash colour only; `dirty` is the real bookkeeping
-      s.cache.push({ page: -1, lastUse: 0, flash: 0, state: 0, dirty: false });
+      // state drives the flash colour only; `dirty` is the real bookkeeping;
+      // `dep` is the index of a cache slot that must be written to disk
+      // before this slot (CCH_precedence careful-write dependency).
+      s.cache.push({ page: -1, lastUse: 0, flash: 0, state: 0, dirty: false, dep: -1 });
     }
+  }
+
+  /* Check whether linking `fromIdx -> toIdx` would create a cycle in the
+   * precedence graph (CCH_precedence). */
+  function dependsOn(s, startIdx, targetIdx) {
+    var cur = startIdx, steps = 0;
+    while (cur >= 0 && cur < s.cache.length && steps < s.cache.length) {
+      if (cur === targetIdx) return true;
+      cur = s.cache[cur].dep;
+      steps++;
+    }
+    return false;
+  }
+
+  /* Record a careful-write dependency: when a page is dirtied (e.g. a
+   * pointer page or primary record pointing to a newly written back-version
+   * page), link it to a previously dirtied buffer so the prerequisite page
+   * is guaranteed to reach disk first. */
+  function attachPrecedence(s, slotIdx) {
+    var slot = s.cache[slotIdx];
+    if (slot.dep >= 0 && slot.dep < s.cache.length && s.cache[slot.dep].dirty) return;
+    slot.dep = -1;
+    var bestIdx = -1, bestTime = -1;
+    for (var i = 0; i < s.cache.length; i++) {
+      if (i === slotIdx) continue;
+      var c = s.cache[i];
+      if (c.dirty && c.page >= 0 && !dependsOn(s, i, slotIdx)) {
+        if (c.lastUse >= bestTime) {
+          bestTime = c.lastUse;
+          bestIdx = i;
+        }
+      }
+    }
+    if (bestIdx >= 0) slot.dep = bestIdx;
+  }
+
+  /* Flush a single cache slot in careful-write precedence order: if slot
+   * `idx` depends on another dirty slot `dep`, flush `dep` to disk first so
+   * no on-disk pointer ever dangles without a WAL. */
+  function flushSlot(s, idx, visited) {
+    if (idx < 0 || idx >= s.cache.length) return 0;
+    var c = s.cache[idx];
+    if (!c.dirty) { c.dep = -1; return 0; }
+    if (!visited) visited = {};
+    if (visited[idx]) return 0;
+    visited[idx] = true;
+
+    var count = 0;
+    var dep = c.dep;
+    c.dep = -1;
+    if (dep >= 0 && dep < s.cache.length && s.cache[dep].dirty && !visited[dep]) {
+      count += flushSlot(s, dep, visited);
+      s.precedenceFlushes++;
+      s.precedenceArcs.push({ from: idx, to: dep, flash: 1 });
+      if (s.precedenceArcs.length > 16) s.precedenceArcs.shift();
+    }
+    c.dirty = false;
+    pageWrite(s, c.page);
+    return count + 1;
   }
 
   // Hot/cold page access: most traffic lands on a small working set, like a
@@ -168,36 +234,44 @@ var Sim = (function () {
   /* returns true on hit; on miss the page is faulted in (LRU eviction) */
   function cacheAccess(s, isWrite) {
     var page = pickPage();
-    var slot = null, lru = null, i;
+    var slot = null, slotIdx = -1, lru = null, lruIdx = 0, i;
     for (i = 0; i < s.cache.length; i++) {
       var c = s.cache[i];
-      if (c.page === page) { slot = c; break; }
-      if (!lru || c.lastUse < lru.lastUse) lru = c;
+      if (c.page === page) { slot = c; slotIdx = i; break; }
+      if (!lru || c.lastUse < lru.lastUse) { lru = c; lruIdx = i; }
     }
     if (slot) {
       slot.lastUse = s.time;
       slot.flash = 1;
       slot.state = isWrite ? 3 : 1; // 1 hit, 3 dirty
-      if (isWrite) slot.dirty = true;
+      if (isWrite) {
+        attachPrecedence(s, slotIdx);
+        slot.dirty = true;
+      }
       s.hits++;
       return true;
     }
     if (lru.page >= 0) {
       s.evictions++;
-      // Evicting a DIRTY buffer is not free: the page must be written out
-      // before its frame can be reused, so the reader pays for someone
-      // else's write. This is where "my SELECT got slow" often comes from.
+      // Evicting a DIRTY buffer is not free: the page (and any careful-write
+      // prerequisite it depends on) must be written out before its frame can
+      // be reused, so the reader pays for someone else's write.
       if (lru.dirty) {
         s.dirtyEvictions++;
-        pageWrite(s, lru.page);
+        flushSlot(s, lruIdx);
       }
     }
     lru.page = page;
     lru.lastUse = s.time;
     lru.flash = 1;
     lru.state = 2; // miss / freshly faulted
-    // faulting a page in to modify it leaves it dirty straight away
-    lru.dirty = !!isWrite;
+    lru.dep = -1;
+    if (isWrite) {
+      attachPrecedence(s, lruIdx);
+      lru.dirty = true;
+    } else {
+      lru.dirty = false;
+    }
     s.misses++;
     s.diskFlash = 1;
     s.diskPos = page / PAGE_SPACE;
@@ -205,16 +279,32 @@ var Sim = (function () {
   }
 
   /* Forced writes (the Firebird default): a commit does not return until its
-   * pages are safely on disk, so committing cleans buffers as it goes. This
-   * is what keeps most evictions cheap on a healthy database. */
+   * pages (and their careful-write prerequisites) are safely on disk, so
+   * committing cleans buffers as it goes. */
   function flushDirty(s, n) {
+    var totalFlushed = 0;
     for (var i = 0; i < s.cache.length && n > 0; i++) {
       var c = s.cache[i];
       if (c.dirty) {
-        c.dirty = false;
-        pageWrite(s, c.page);
+        totalFlushed += flushSlot(s, i);
         n--;
       }
+    }
+    return totalFlushed;
+  }
+
+  function tickCacheWriter(s, dt) {
+    for (var i = s.precedenceArcs.length - 1; i >= 0; i--) {
+      s.precedenceArcs[i].flash -= dt * 1.8;
+      if (s.precedenceArcs[i].flash <= 0) s.precedenceArcs.splice(i, 1);
+    }
+    if (s.forcedWrites) { s.flushAcc = 0; return; }
+    // When forcedWrites is off, dirty buffers linger in the cache and are
+    // flushed periodically in batches by the background cache writer.
+    s.flushAcc += dt * 1.2;
+    if (s.flushAcc >= 1) {
+      s.flushAcc -= 1;
+      flushDirty(s, 1);
     }
   }
 
@@ -279,6 +369,7 @@ var Sim = (function () {
     for (var i = 0; i < s.cache.length; i++) {
       var c = s.cache[i];
       if (c.page >= 0 && !c.dirty) {
+        attachPrecedence(s, i);
         c.dirty = true;
         c.state = 3;
         c.flash = Math.max(c.flash, 0.55);
@@ -393,7 +484,7 @@ var Sim = (function () {
       path.push(wp("lock", 0.12, "lock"));
       path.push(wp("mvcc", 0.18, "version"));
       path.push(wp("cache", 0.08, "wpage"));
-      path.push(wp("tra", 0.12, "commit"));
+      path.push(wp("tra", 0.04, "commit"));
     } else {
       path.push(wp("mvcc", 0.04, "rversion"));
       if (Math.random() < 0.45) {
@@ -545,10 +636,15 @@ var Sim = (function () {
           break;
         }
         finishTxn(s, q, false);
-        // Forced writes: this update dirtied one page, so its commit takes
-        // one page to disk. Dirty evictions stay rare on a healthy database
-        // for exactly this reason — the cost lands at commit instead.
-        flushDirty(s, 1);
+        // Forced writes (MON$FORCED_WRITES): when enabled (default), the
+        // commit waits for its dirtied page (and any careful-write
+        // prerequisite in the precedence graph) to be flushed to disk.
+        // When disabled, the commit returns as soon as the TIP bit flips in
+        // memory, leaving dirty buffers for background flush or eviction.
+        if (s.forcedWrites) {
+          var flushed = flushDirty(s, 1);
+          q.dwell += 0.10 + Math.max(0, flushed - 1) * 0.04;
+        }
         replicateCommit(s, q);
         break;
       case "result":
@@ -582,8 +678,8 @@ var Sim = (function () {
       var move = q.speed * dt;
       if (dist <= move || dist < 0.001) {
         q.x = step.x; q.y = step.y;
+        q.dwell = step.dwell;
         arrive(s, q);
-        q.dwell = Math.max(q.dwell, step.dwell);
         q.idx++;
         if (q.idx >= q.path.length) q.dead = true;
         if (q.dead) hadDead = true;
@@ -1198,6 +1294,15 @@ var Sim = (function () {
 
   // ---- public API ------------------------------------------------------
 
+  function setForcedWrites(s, on) {
+    var val = !!on;
+    if (s.forcedWrites === val) return;
+    s.forcedWrites = val;
+    say(s, val
+      ? "Forced writes ON — commits flush dirty pages synchronously in precedence order."
+      : "Forced writes OFF — commits return fast in RAM; dirty pages buffer in cache.");
+  }
+
   function setGcPolicy(s, policy) {
     if (policy !== "cooperative" && policy !== "background" && policy !== "combined") return;
     if (s.gcPolicy === policy) return;
@@ -1241,6 +1346,7 @@ var Sim = (function () {
 
     moveParticles(s, dt);
     tickBackgroundGC(s, dt);
+    tickCacheWriter(s, dt);
     tickSweep(s, dt);
     tickGbak(s, dt);
     tickNbackup(s, dt);
@@ -1275,6 +1381,7 @@ var Sim = (function () {
     tick: tick,
     warm: warm,
     setCacheSize: setCacheSize,
+    setForcedWrites: setForcedWrites,
     setGcPolicy: setGcPolicy,
     setLongTxn: setLongTxn,
     startSweep: startSweep,
