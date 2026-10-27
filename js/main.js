@@ -94,19 +94,22 @@
       lastX = e.clientX; lastY = e.clientY;
     } else {
       var r = canvas.getBoundingClientRect();
-      hoverId = Render.pick(cam, e.clientX - r.left, e.clientY - r.top);
+      hoverId = Render.pick(cam, e.clientX - r.left, e.clientY - r.top, sim);
       canvas.style.cursor = hoverId ? "pointer" : "grab";
     }
   });
   canvas.addEventListener("click", function (e) {
     if (dragMoved) return;
     var r = canvas.getBoundingClientRect();
-    var id = Render.pick(cam, e.clientX - r.left, e.clientY - r.top);
+    var id = Render.pick(cam, e.clientX - r.left, e.clientY - r.top, sim);
     if (id) {
       selectedId = id;
-      UI.showBuilding(id);
+      var tw = id === "mvcc" ? Render.getHoveredTower() : null;
+      Render.setSelectedTower(tw);
+      UI.showBuilding(id, tw);
     } else {
       selectedId = null;
+      Render.setSelectedTower(null);
     }
   });
   // camera arithmetic lives in js/camera.js so it can be tested without a

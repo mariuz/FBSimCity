@@ -173,7 +173,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
 
 ## Part 3 — Rendering & Visual Readouts (`js/render.js`)
 
-### 12. Exact isometric polygon hit-testing & per-tower MVCC inspection
+### 12. [x] Exact isometric polygon hit-testing & per-tower MVCC inspection — *Completed*
 - **Today in `render.js`:** `pick()` tests a 2D axis-aligned bounding box
   (`x0..x1`, `y0..y1`) around the 8 projected vertices of each building, and
   only attaches `building` metadata to the first `Record Version Tower`

@@ -1080,6 +1080,33 @@
     t.ok("without the count guard a landing finger would move the city",
       jumpy.ox !== 0 || jumpy.oy !== 0 || jumpy.zoom !== 1,
       "the guard is not what is holding this still");
+
+    // Exact isometric polygon hit-testing & per-tower MVCC picking:
+    // Every MVCC tower (0..11) is individually pickable at its projected center,
+    // and empty corner space inside a building's 2D AABB but outside its
+    // isometric diamond does not false-hit the building.
+    var pickCam = { ox: 600, oy: 200, zoom: 1, target: null };
+    var pickSim = Sim.create();
+    var m = FB.byId.mvcc;
+    var allTowersHit = true;
+    for (var ti = 0; ti < 12; ti++) {
+      var tc = ti % 4, tr = Math.floor(ti / 4);
+      var tx = m.x + 0.8 + tc * 1.85 + 0.65;
+      var ty = m.y + 0.8 + tr * 3.1 + 0.65;
+      var pt = Render.proj(pickCam, tx, ty, 0.4);
+      var hitTw = Render.pickTower(pickCam, pt[0], pt[1], pickSim);
+      var hitId = Render.pick(pickCam, pt[0], pt[1], pickSim);
+      if (hitTw !== ti || hitId !== "mvcc") allTowersHit = false;
+    }
+    t.ok("all 12 MVCC towers are individually pickable via exact polygon hit-testing",
+      allTowersHit);
+    var lex = FB.byId.lexer;
+    var lexTop = Render.proj(pickCam, lex.x, lex.y, lex.h);
+    var lexLeft = Render.proj(pickCam, lex.x, lex.y + lex.d, lex.h);
+    // Point at (lexLeft.x, lexTop.y) lies inside the 2D AABB of the top face
+    // but well outside the isometric diamond
+    t.ok("polygon hit-test rejects empty AABB corners outside the isometric quad",
+      !Render.hitBox(pickCam, lexLeft[0], lexTop[1] - 4, lex.x, lex.y, lex.w, lex.d, lex.h));
   }
 
   // ---- 8c. the readouts agree with the model ---------------------------

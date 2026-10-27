@@ -49,6 +49,9 @@ var Render = (function () {
   };
   var T = THEMES.dark;
   var themeName = "dark";
+  var lastSim = null;
+  var hoveredTower = null;
+  var selectedTower = null;
 
   /* Respect prefers-reduced-motion: the information is in the colours and
    * the numbers, not in the pulsing, so the decorative animation stops
@@ -525,11 +528,16 @@ var Render = (function () {
         var t = s.tables[i];
         var tx = m.x + 0.8 + c * 1.85, ty = m.y + 0.8 + r * 3.1;
         var h = 0.5 + Math.min(t.versions, 26) * 0.28;
+        var tGlow = Math.max(0, t.flash);
+        if ((hoverId === "mvcc" && (hoveredTower === i || hoveredTower === null)) ||
+            (selectedId === "mvcc" && (selectedTower === i || selectedTower === null))) {
+          tGlow = 1;
+        }
         list.push({
           key: tx + 1.3 + ty + 1.3, type: "box",
           x: tx, y: ty, w: 1.3, d: 1.3, h: h,
           color: towerColor(t.versions),
-          glow: Math.max(0, t.flash), b: (i === 0 ? m : null), mvcc: true
+          glow: tGlow, b: m, mvcc: true, towerIdx: i
         });
       }
     }
@@ -609,6 +617,25 @@ var Render = (function () {
       ctx.fillStyle = T.labelDim;
       ctx.fillText(b.code, p[0], p[1] + 11 * Math.min(cam.zoom, 1.15));
     });
+    // Per-tower MVCC hover/selection callout
+    var activeTw = hoveredTower !== null ? hoveredTower : selectedTower;
+    if (activeTw !== null && s.tables && s.tables[activeTw]) {
+      var mv = FB.byId.mvcc;
+      var tc = activeTw % 4, tr = Math.floor(activeTw / 4);
+      var twObj = s.tables[activeTw];
+      var twX = mv.x + 0.8 + tc * 1.85 + 0.65;
+      var twY = mv.y + 0.8 + tr * 3.1 + 0.65;
+      var twH = 0.5 + Math.min(twObj.versions, 26) * 0.28 + 0.65;
+      var twP = proj(cam, twX, twY, twH);
+      var deadCnt = 0;
+      for (var di = 0; di < twObj.chain.length - 1; di++) {
+        if (twObj.chain[di] < s.ost) deadCnt++;
+      }
+      ctx.font = "600 " + (10 * Math.min(cam.zoom, 1.2)) + "px Consolas, monospace";
+      ctx.fillStyle = T.labelStrong;
+      ctx.fillText("T" + activeTw + ": " + twObj.versions + " ver" +
+        (deadCnt > 0 ? " (" + deadCnt + " GC-able)" : ""), twP[0], twP[1]);
+    }
     // TIP counters over the Transaction Hall
     var t = FB.byId.tra;
     var tp = proj(cam, t.x + t.w / 2, t.y + t.d / 2, t.h + 2.2);
@@ -646,22 +673,70 @@ var Render = (function () {
     ctx.textAlign = "left";
   }
 
-  // picking: screen-space bbox of each building's projected corners
-  function pick(cam, mx, my) {
+  // Exact 2D ray-casting point-in-polygon check on projected isometric faces
+  function pointInPoly(px, py, pts) {
+    var inside = false;
+    for (var i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      var xi = pts[i][0], yi = pts[i][1];
+      var xj = pts[j][0], yj = pts[j][1];
+      var intersect = ((yi > py) !== (yj > py)) &&
+        (px < (xj - xi) * (py - yi) / ((yj - yi) || 1e-9) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  function hitBox(cam, mx, my, x, y, w, d, h) {
+    var hz = h || 0;
+    var a0 = proj(cam, x, y, 0), b0 = proj(cam, x + w, y, 0),
+        c0 = proj(cam, x + w, y + d, 0), d0 = proj(cam, x, y + d, 0);
+    if (pointInPoly(mx, my, [a0, b0, c0, d0])) return true;
+    if (hz !== 0) {
+      var a1 = proj(cam, x, y, hz), b1 = proj(cam, x + w, y, hz),
+          c1 = proj(cam, x + w, y + d, hz), d1 = proj(cam, x, y + d, hz);
+      if (pointInPoly(mx, my, [a1, b1, c1, d1])) return true;
+      if (pointInPoly(mx, my, [b1, c1, c0, b0])) return true;
+      if (pointInPoly(mx, my, [d1, c1, c0, d0])) return true;
+      if (hz < 0) {
+        if (pointInPoly(mx, my, [a0, b0, b1, a1])) return true;
+        if (pointInPoly(mx, my, [a0, d0, d1, a1])) return true;
+      }
+    }
+    return false;
+  }
+
+  function pickTower(cam, mx, my, s) {
+    var sim = s || lastSim;
+    var m = FB.byId.mvcc;
+    if (!m) return -1;
+    var bestIdx = -1, bestKey = -1;
+    var cols = 4, rows = 3, i = 0;
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++, i++) {
+        var ver = (sim && sim.tables && sim.tables[i]) ? sim.tables[i].versions : 1;
+        var tx = m.x + 0.8 + c * 1.85, ty = m.y + 0.8 + r * 3.1;
+        var h = 0.5 + Math.min(ver, 26) * 0.28;
+        if (hitBox(cam, mx, my, tx, ty, 1.3, 1.3, h)) {
+          var key = tx + ty + 2.6;
+          if (key > bestKey) { bestKey = key; bestIdx = i; }
+        }
+      }
+    }
+    return bestIdx;
+  }
+
+  // picking: exact isometric polygon hit-testing in reverse painter order
+  function pick(cam, mx, my, s) {
+    var tw = pickTower(cam, mx, my, s);
+    hoveredTower = tw >= 0 ? tw : null;
+    if (tw >= 0) return "mvcc";
+
     var best = null, bestKey = -1;
     FB.buildings.forEach(function (b) {
-      var pts = [
-        proj(cam, b.x, b.y, 0), proj(cam, b.x + b.w, b.y, 0),
-        proj(cam, b.x + b.w, b.y + b.d, 0), proj(cam, b.x, b.y + b.d, 0),
-        proj(cam, b.x, b.y, b.h || 1), proj(cam, b.x + b.w, b.y, b.h || 1),
-        proj(cam, b.x + b.w, b.y + b.d, b.h || 1), proj(cam, b.x, b.y + b.d, b.h || 1)
-      ];
-      var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-      pts.forEach(function (p) {
-        x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]);
-        y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]);
-      });
-      if (mx >= x0 && mx <= x1 && my >= y0 && my <= y1) {
+      var h = b.h || 0;
+      if (b.id === "pio") h = -1.2;
+      else if (b.id === "delta" || b.id === "replica") h = -0.95;
+      if (hitBox(cam, mx, my, b.x, b.y, b.w, b.d, h)) {
         var key = b.x + b.y + b.w + b.d;
         if (key > bestKey) { bestKey = key; best = b.id; }
       }
@@ -670,6 +745,7 @@ var Render = (function () {
   }
 
   function draw(ctx, cam, s, cw, ch, hoverId, selectedId, time) {
+    lastSim = s;
     drawGround(ctx, cam, cw, ch, s);
     drawStorage(ctx, cam, s);
     drawDelta(ctx, cam, s);
@@ -689,7 +765,11 @@ var Render = (function () {
   }
 
   return {
-    draw: draw, pick: pick, proj: proj,
+    draw: draw, pick: pick, pickTower: pickTower,
+    pointInPoly: pointInPoly, hitBox: hitBox,
+    getHoveredTower: function () { return hoveredTower; },
+    setSelectedTower: function (idx) { selectedTower = idx; },
+    proj: proj,
     setTheme: setTheme,
     isCalm: function () { return calm; },
     TW: TW, TH: TH, TZ: TZ

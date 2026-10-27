@@ -617,12 +617,19 @@ var UI = (function () {
   // ---- info panel ------------------------------------------------------
 
   var infoSelectedId = null;
+  var selectedTowerIdx = null;
 
-  function showBuilding(id) {
+  function showBuilding(id, towerIdx) {
     var b = FB.byId[id];
     if (!b) return;
     $("decide-dock").classList.add("hidden");
     infoSelectedId = id;
+    if (id === "mvcc") {
+      selectedTowerIdx = (towerIdx !== undefined && towerIdx !== null && towerIdx >= 0)
+        ? towerIdx : null;
+    } else {
+      selectedTowerIdx = null;
+    }
     els.infoTitle.textContent = b.name;
     els.infoCode.textContent = b.code;
     els.infoCode.style.display = "";
@@ -832,16 +839,36 @@ var UI = (function () {
     });
   }
 
-  // live version-chain inspector: the busiest table's chain, with each
-  // version's writing transaction and its visibility against the OIT
+  // live version-chain inspector: either a clicked tower (T0..T11) or the
+  // busiest table's chain, with each version's writing transaction and
+  // visibility against OST / OIT
   function renderChain(s) {
     var el = $("chain-live");
     if (!el) return;
-    var t = s.tables[0];
-    for (var i = 1; i < s.tables.length; i++) {
-      if (s.tables[i].chain.length > t.chain.length) t = s.tables[i];
+    var tblIdx = 0, t = s.tables[0];
+    if (selectedTowerIdx !== null && s.tables[selectedTowerIdx]) {
+      tblIdx = selectedTowerIdx;
+      t = s.tables[tblIdx];
+    } else {
+      for (var i = 1; i < s.tables.length; i++) {
+        if (s.tables[i].chain.length > t.chain.length) {
+          t = s.tables[i];
+          tblIdx = i;
+        }
+      }
     }
-    var html = "<h3>Busiest table — live version chain</h3>" +
+    var minTx = t.chain.length ? t.chain[0] : s.next;
+    var gcEligible = 0;
+    for (var gi = 0; gi < t.chain.length - 1; gi++) {
+      if (t.chain[gi] < s.ost) gcEligible++;
+    }
+    var titlePrefix = selectedTowerIdx !== null
+      ? "Tower T" + tblIdx + " — live version chain"
+      : "Busiest table (T" + tblIdx + ") — live version chain";
+    var html = "<h3>" + titlePrefix + "</h3>" +
+      "<p class='fine'>Versions: <b>" + t.versions +
+      "</b> &middot; Oldest <code>minTx</code>: <b>" + minTx +
+      "</b> &middot; Eligible for GC (<code>&lt; OST</code>): <b>" + gcEligible + "</b></p>" +
       "<p class='fine'>Back-version reads (<code>MON$BACKVERSION_READS</code>): <b>" +
       s.backversionReads + "</b> &middot; Purges (<code>MON$RECORD_PURGES</code>): <b>" +
       s.purges + "</b> &middot; <code>GCPolicy</code>: <b>" + s.gcPolicy + "</b></p>" +
