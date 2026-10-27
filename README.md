@@ -112,8 +112,9 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
   [machine room](https://mariuz.github.io/FBSimCity/machine/) runs the actual
   Firebird engine on the page — [Electric Firebird](https://github.com/mariuz/electric-firebird)
   compiles it to WebAssembly the way PGlite does for PostgreSQL. Type SQL at
-  it, or run one of six guided sequences that each end in a number you can
-  hold against something the city draws.
+  it, inspect its execution plans (`Explain`), or run one of seven guided
+  sequences that each end in a number you can hold against something the city
+  draws.
 - **No mouse?** `Tab` and `Shift+Tab` step through every subsystem in pipeline
   order, opening each panel and announcing it to a screen reader.
 - Switch to the **daylight theme** (`D`), pause the world (`space`), or run
@@ -134,14 +135,16 @@ clients ⇄ REMOTE (Y-valve) ⇄ DSQL (SQL → BLR) ⇄ JRD (engine) — LOCK ma
 The city is a model. The [machine room](machine/) is the other thing: the
 actual Firebird embedded engine compiled to WebAssembly by
 [Electric Firebird](https://github.com/mariuz/electric-firebird), running in a
-worker on the page, with a SQL workbench and six guided sequences that each
-end in a number you can hold against something the city draws.
+worker on the page, with a SQL workbench (`Run` and `Explain`), live attachment
+markers via `db.databaseInfo()`, and seven guided sequences that each end in a
+number you can hold against something the city draws.
 
 | Sequence | What the engine is asked | What it settles |
 |---|---|---|
 | Every statement gets a transaction | `CURRENT_TRANSACTION`, twice | The Transaction Hall's per-query id is the engine's behaviour, not a device |
-| OIT, OAT and Next | `MON$DATABASE` | The three markers over the yard are columns in a monitoring table |
+| OIT, OAT and Next | `MON$DATABASE` / `db.databaseInfo()` | The three markers over the yard are columns in a monitoring table and attachment header counters |
 | An UPDATE writes a version | `MON$RECORD_STATS` back-version reads and purges | The towers grow floors because the engine really does keep the old rows |
+| An index walk or a sort | `db.explain(sql, { detailed: true })` | The Compiler & Optimizer chooses between B-Tree Gardens (`INDEX`) and the Sort Yard (`SORT`) |
 | The catalogue is ordinary tables | `RDB$RELATIONS` | Metadata is a district, not a special mechanism |
 | A fetch is not a read | `MON$IO_STATS` fetches against reads | The cache plaza is exactly this distinction |
 | No write-ahead log | `MON$DATABASE` settings | Page size, buffers, sweep interval, forced writes — and no log setting, because there is no log |
@@ -154,10 +157,11 @@ not exist here.
 
 The engine is loaded from Electric Firebird's published build at the same
 origin, so no WebAssembly is vendored into this repository and the city itself
-still makes no network calls at all. Getting it to run inside the page needs
-`SharedArrayBuffer`, which needs cross-origin isolation, which GitHub Pages
-cannot grant — a service worker supplies the headers. v0.8.0 claimed this
-embed was impossible; it was wrong, and [engine.html](engine.html) records why.
+still makes no network calls at all. Electric Firebird ships both the threaded
+build and `firebird-embedded-st` (the build without threads, which needs no
+`SharedArrayBuffer` and no `COOP`/`COEP` headers), so on GitHub Pages the
+engine starts directly on the first visit without a service-worker reload;
+[engine.html](engine.html) records the history.
 
 ## Found something wrong?
 

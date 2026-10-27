@@ -3,14 +3,13 @@
  * Drives the real Firebird engine (Electric Firebird's WebAssembly build)
  * from this page, so the city's claims can be settled rather than believed.
  *
- * The engine is loaded from the Electric Firebird demo deployment. That is a
- * same-origin path on GitHub Pages, which is the only reason this can be an
- * embed at all: the engine is built with pthreads, so it needs
- * `SharedArrayBuffer`, which needs a cross-origin isolated page, which needs
- * COOP/COEP headers that GitHub Pages will not send — coi-serviceworker
- * synthesises those for this page, and same-origin subresources are allowed
- * under `require-corp` without any header of their own. A cross-origin CDN
- * copy would need CORP on every asset and is not worth the fragility.
+ * The engine is loaded from the Electric Firebird demo deployment at the same
+ * origin on GitHub Pages. That deployment ships both the pthread build
+ * (`firebird-embedded`, used when the page is cross-origin isolated and has
+ * `SharedArrayBuffer`) and the single-threaded build (`firebird-embedded-st`),
+ * which needs neither `SharedArrayBuffer` nor COOP/COEP headers. On GitHub
+ * Pages the worker picks `firebird-embedded-st` automatically, so the engine
+ * starts on the first visit without a service-worker reload.
  *
  * The cost is a real dependency on another project's published build. When it
  * moves, this page says so in plain words instead of showing an empty box.
@@ -29,6 +28,7 @@ const els = {
   statusText: document.getElementById('status-text'),
   sql: document.getElementById('sql'),
   run: document.getElementById('run'),
+  explain: document.getElementById('explain'),
   reset: document.getElementById('reset'),
   timing: document.getElementById('timing'),
   result: document.getElementById('result'),
@@ -93,7 +93,8 @@ const SEQUENCES = [
         ok: next >= oit,
         text: `OIT ${r.OIT}, OAT ${r.OAT}, oldest snapshot ${r.OST}, next ` +
           `${r.NEXT_TX}. These are not FBSimCity's invention and not a ` +
-          `simplification: they are columns in a monitoring table. The gap ` +
+          `simplification: they are columns in a monitoring table (and in ` +
+          `IAttachment::getInfo, which feeds the bar above). The gap ` +
           `between OIT and next is ${next - oit} here, and in the city it is ` +
           `the distance garbage collection has to leave alone.`,
       };
@@ -143,6 +144,36 @@ const SEQUENCES = [
             `versions are written either way; whether the engine had to read ` +
             `past one depends on what garbage collection got to first. Run ` +
             `the sequence again.`,
+      };
+    },
+  },
+  {
+    id: 'plan',
+    title: 'An index walk or a sort, in the optimizer\'s own words',
+    blurb: 'B-Tree Gardens versus the Sort Yard, via db.explain().',
+    steps: [
+      { sql: 'RECREATE TABLE PLAN_DEMO (ID INTEGER PRIMARY KEY, NAME VARCHAR(40))', kind: 'exec' },
+      { sql: 'SELECT NAME FROM PLAN_DEMO WHERE ID = 1', kind: 'explain' },
+      { sql: 'SELECT NAME FROM PLAN_DEMO ORDER BY NAME', kind: 'explain' },
+    ],
+    verdict(res) {
+      const p1 = res[1] && res[1].plan ? res[1].plan : '';
+      const p2 = res[2] && res[2].plan ? res[2].plan : '';
+      if (!p1 || !p2) return null;
+      const indexed = /INDEX/i.test(p1);
+      const sorted = /SORT/i.test(p2);
+      return {
+        ok: indexed && sorted,
+        text: indexed && sorted
+          ? `Filtering on the primary key planned “${p1}” — a trip through ` +
+            `the B-Tree Gardens. Ordering by an unindexed column planned ` +
+            `“${p2}” — a full table scan sent to the Sort Yard. Neither ` +
+            `SELECT was executed: db.explain() calls IStatement::getPlan, ` +
+            `which is the execution tree the Compiler & Optimizer builds ` +
+            `before Execution Hall ever touches a row.`
+          : `The optimizer returned “${p1}” and “${p2}” — expected an INDEX ` +
+            `plan for the primary-key filter and a SORT plan for the ` +
+            `unindexed ORDER BY.`,
       };
     },
   },
@@ -245,7 +276,9 @@ const CORRESPONDENCE = [
   ['Transaction Hall stamps a new id per transaction',
    'SELECT CURRENT_TRANSACTION FROM RDB$DATABASE'],
   ['OIT / OAT / Next markers over the yard',
-   'SELECT MON$OLDEST_TRANSACTION, MON$OLDEST_ACTIVE, MON$NEXT_TRANSACTION FROM MON$DATABASE'],
+   'db.databaseInfo() or SELECT MON$OLDEST_TRANSACTION, MON$OLDEST_ACTIVE, MON$NEXT_TRANSACTION FROM MON$DATABASE'],
+  ['Compiler & Optimizer chooses index retrieval or sort',
+   'db.explain(sql, { detailed: true }) — IStatement::getPlan (INDEX vs SORT)'],
   ['Version towers grow a floor per UPDATE',
    'MON$RECORD_STATS: MON$RECORD_UPDATES, MON$BACKVERSION_READS'],
   ['Garbage collection removes unreachable versions',
@@ -258,6 +291,8 @@ const CORRESPONDENCE = [
    'SELECT RDB$RELATION_NAME FROM RDB$RELATIONS'],
   ['Sweep interval on the control room dial',
    'SELECT MON$SWEEP_INTERVAL FROM MON$DATABASE'],
+  ['Sort memory (TempCacheLimit) and cooperative GC policy',
+   "SELECT RDB$CONFIG_NAME, RDB$CONFIG_VALUE FROM RDB$CONFIG WHERE RDB$CONFIG_NAME IN ('TempCacheLimit', 'GCPolicy')"],
 ];
 
 // ---- helpers -------------------------------------------------------------
@@ -278,8 +313,16 @@ function setStatus(state, text) {
   els.statusText.textContent = text;
 }
 
+function setButtonsDisabled(disabled) {
+  els.run.disabled = disabled;
+  if (els.explain) els.explain.disabled = disabled;
+}
+
 function looksLikeQuery(sql) {
-  return /^\s*(select|with|execute\s+block)/i.test(sql);
+  const text = sql.replace(/^\s*(--[^\n]*\n|\/\*[\s\S]*?\*\/|\s)+/, '').trim();
+  if (/^(select|with)\b/i.test(text)) return true;
+  if (/^execute\s+block\b/i.test(text) && /\breturns\b/i.test(text)) return true;
+  return false;
 }
 
 function el(tag, cls, text) {
@@ -321,6 +364,15 @@ function renderStep(sql, res, err) {
   box.append(el('pre', 'step-sql', sql));
   if (err) {
     box.append(el('div', 'err', err));
+  } else if (res && typeof res.plan === 'string') {
+    if (res.plan) {
+      box.append(el('pre', 'plan', res.plan));
+      if (res.detailed) {
+        box.append(el('pre', 'plan plan-detailed', res.detailed));
+      }
+    } else {
+      box.append(el('p', 'note', 'Statement carries no execution plan (DDL).'));
+    }
   } else if (res && res.rows) {
     if (res.rows.length) renderTable(box, res);
     else box.append(el('p', 'note', 'No rows.'));
@@ -332,13 +384,37 @@ function renderStep(sql, res, err) {
 
 // ---- running -------------------------------------------------------------
 
+async function explainOne(sql) {
+  if (typeof db.explain !== 'function') {
+    throw new Error('This engine build does not expose db.explain().');
+  }
+  const [plan, detailed] = await Promise.all([
+    db.explain(sql),
+    db.explain(sql, { detailed: true }),
+  ]);
+  return { plan, detailed };
+}
+
 async function runOne(sql, kind) {
+  if (kind === 'explain') return explainOne(sql);
   const wantQuery = kind ? kind === 'query' : looksLikeQuery(sql);
   return wantQuery ? db.query(sql) : db.exec(sql);
 }
 
 async function refreshMarkers() {
   try {
+    if (typeof db.databaseInfo === 'function') {
+      const info = await db.databaseInfo();
+      if (!info) return;
+      els.markers.hidden = false;
+      document.getElementById('mk-oit').textContent = info.oldestTransaction;
+      document.getElementById('mk-oat').textContent = info.oldestActive;
+      document.getElementById('mk-ost').textContent = info.oldestSnapshot;
+      document.getElementById('mk-next').textContent = info.nextTransaction;
+      document.getElementById('mk-page').textContent = info.pageSize;
+      document.getElementById('mk-buf').textContent = info.pageBuffers;
+      return;
+    }
     const res = await db.query(
       'SELECT MON$OLDEST_TRANSACTION AS OIT, MON$OLDEST_ACTIVE AS OAT,' +
       ' MON$OLDEST_SNAPSHOT AS OST, MON$NEXT_TRANSACTION AS NX,' +
@@ -363,7 +439,7 @@ async function runWorkbench() {
   const sql = els.sql.value.trim();
   if (!sql) return;
   busy = true;
-  els.run.disabled = true;
+  setButtonsDisabled(true);
   setStatus('busy', 'Running…');
   els.result.replaceChildren();
   const started = performance.now();
@@ -377,14 +453,37 @@ async function runWorkbench() {
   }
   await refreshMarkers();
   setStatus('ready', 'Ready');
-  els.run.disabled = false;
+  setButtonsDisabled(false);
+  busy = false;
+}
+
+async function runExplain() {
+  if (busy || !db) return;
+  const sql = els.sql.value.trim();
+  if (!sql) return;
+  busy = true;
+  setButtonsDisabled(true);
+  setStatus('busy', 'Explaining…');
+  els.result.replaceChildren();
+  const started = performance.now();
+  try {
+    const res = await explainOne(sql);
+    renderStep(sql, res, null);
+    els.timing.textContent = `${Math.round(performance.now() - started)} ms`;
+  } catch (e) {
+    renderStep(sql, null, String((e && e.message) || e));
+    els.timing.textContent = `failed after ${Math.round(performance.now() - started)} ms`;
+  }
+  await refreshMarkers();
+  setStatus('ready', 'Ready');
+  setButtonsDisabled(false);
   busy = false;
 }
 
 async function runSequence(seq) {
   if (busy || !db) return;
   busy = true;
-  els.run.disabled = true;
+  setButtonsDisabled(true);
   setStatus('busy', `Running “${seq.title}”…`);
   els.result.replaceChildren();
   els.sql.value = seq.steps.map((s) => s.sql).join(';\n\n') + ';';
@@ -419,7 +518,7 @@ async function runSequence(seq) {
 
   await refreshMarkers();
   setStatus('ready', 'Ready');
-  els.run.disabled = false;
+  setButtonsDisabled(false);
   busy = false;
 }
 
@@ -449,13 +548,9 @@ function buildCorrespondence() {
 
 function reportIsolation() {
   els.isolation.textContent = self.crossOriginIsolated
-    ? 'This page is cross-origin isolated, so SharedArrayBuffer is available ' +
-      'and the engine\'s threads can run. The service worker below is what ' +
-      'made that true on a host that cannot send the headers itself.'
-    : 'This page is not cross-origin isolated, so SharedArrayBuffer is not ' +
-      'available. On the first visit the service worker installs and reloads ' +
-      'the page; if this message persists, the page is probably being served ' +
-      'over plain HTTP or from a file:// URL, where service workers do not run.';
+    ? 'Cross-origin isolated, so this runs the threaded build of the engine.'
+    : 'Not cross-origin isolated (GitHub Pages sends no COOP/COEP), so this runs ' +
+      'the build without threads, which needs no SharedArrayBuffer.';
 }
 
 function fail(message) {
@@ -477,39 +572,15 @@ async function boot() {
   buildCorrespondence();
   reportIsolation();
 
-  if (!self.crossOriginIsolated) {
-    // First visit: the service worker has just installed and has not taken
-    // control yet, so it will reload the page in a moment and the engine will
-    // start on the way back. That is the normal path, not a failure, and
-    // calling it "unavailable" would be alarming and wrong. Once a controller
-    // exists and the page is still not isolated, something really is wrong.
-    const firstVisit = 'serviceWorker' in navigator &&
-      !navigator.serviceWorker.controller;
-    if (firstVisit) {
-      setStatus('busy', 'Preparing the engine…');
-      els.result.replaceChildren();
-      els.result.append(el('p', 'note',
-        'First visit: the page is installing the service worker that supplies ' +
-        'the cross-origin isolation headers GitHub Pages cannot send, and will ' +
-        'reload itself once. The engine starts on the way back.'));
-      return;
-    }
-    fail('This page is not cross-origin isolated, so SharedArrayBuffer is ' +
-         'not available and the engine cannot start. That usually means the ' +
-         'page is being served over plain HTTP or from a file:// URL, where ' +
-         'service workers do not run.');
-    return;
-  }
-
   try {
     const mod = await import(ENGINE_BASE + 'firebird-browser.mjs');
     const worker = new Worker(new URL(ENGINE_BASE + 'firebird-engine-worker.js', location.origin));
     db = new mod.FirebirdBrowser(DB_NAME, { worker });
     const hello = await db.query(
-      "SELECT RDB$GET_CONTEXT('SYSTEM', 'ENGINE_VERSION') AS V FROM RDB$DATABASE");
+      "SELECT TRIM(RDB$GET_CONTEXT('SYSTEM', 'ENGINE_VERSION')) AS V FROM RDB$DATABASE");
     const v = row(hello);
     setStatus('ready', v ? `Firebird ${v.V} ready` : 'Ready');
-    els.run.disabled = false;
+    setButtonsDisabled(false);
     await refreshMarkers();
   } catch (e) {
     fail('Could not start the engine: ' + String((e && e.message) || e));
@@ -517,15 +588,28 @@ async function boot() {
 }
 
 els.run.addEventListener('click', runWorkbench);
+if (els.explain) els.explain.addEventListener('click', runExplain);
 els.sql.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runWorkbench(); }
 });
 els.reset.addEventListener('click', async () => {
-  if (!db) return;
-  try { await db.close(); } catch (e) { /* closing a dead handle is fine */ }
-  indexedDB.deleteDatabase(DB_NAME);
-  location.reload();
+  els.reset.disabled = true;
+  setButtonsDisabled(true);
+  setStatus('booting', 'Deleting the database…');
+  try {
+    if (db) await db.close();
+    db = null;
+    await new Promise((resolve, reject) => {
+      const req = indexedDB.deleteDatabase(`firebird_${DB_NAME}`);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => setTimeout(resolve, 3000);
+    });
+  } catch (e) {
+    /* closing or deleting a dead handle is fine */
+  } finally {
+    location.reload();
+  }
 });
-window.addEventListener('beforeunload', () => { if (db) { try { db.persist(); } catch (e) { } } });
 
 boot();

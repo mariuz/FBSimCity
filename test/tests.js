@@ -958,7 +958,7 @@
   // everything on it is therefore real. It must say otherwise, in the page
   // itself rather than only in a commit message.
 
-  function testMachineRoom(html, js) {
+  function testMachineRoom(html, js, sw) {
     t.ok("the machine room exists", html.length > 0);
     t.ok("the machine room is linked from the city",
       (window.__indexHtml || "").indexOf('href="machine/"') !== -1);
@@ -970,10 +970,22 @@
     });
     t.ok("the machine room explains cross-origin isolation",
       /SharedArrayBuffer/.test(html) && /coi-serviceworker/.test(html));
+    t.ok("the machine room no longer loads coi-serviceworker on visit",
+      !/<script[^>]*coi-serviceworker/.test(html));
+    t.ok("the retired coi-serviceworker unregisters itself",
+      /registration\.unregister\(\)/.test(sw || ""));
+    t.ok("the machine room starts without requiring crossOriginIsolated",
+      !/if\s*\(\s*!(?:self\.|window\.)?crossOriginIsolated/.test(js));
     t.ok("the machine room degrades rather than showing an empty box",
       /function fail\(/.test(js) && /crossOriginIsolated/.test(js));
+    t.ok("the machine room reads markers via db.databaseInfo()",
+      /db\.databaseInfo\(\)/.test(js));
+    t.ok("the machine room exposes db.explain() in the workbench and sequences",
+      /id="explain"/.test(html) && /db\.explain\(/.test(js));
+    t.ok("the machine room deletes the firebird_-prefixed IndexedDB database",
+      /firebird_\$\{DB_NAME\}/.test(js));
     t.ok("every sequence computes its verdict from the results",
-      (js.match(/verdict\(res\)/g) || []).length >= 6);
+      (js.match(/verdict\(res\)/g) || []).length >= 7);
     t.ok("no sequence asserts a verdict unconditionally",
       (js.match(/ok:\s*true/g) || []).length <= 1,
       "found " + (js.match(/ok:\s*true/g) || []).length +
@@ -1001,7 +1013,8 @@
       fetchText("../lifecycle.html"),
       fetchText("../index.html"),
       fetchText("../machine/index.html"),
-      fetchText("../machine/machine.js")
+      fetchText("../machine/machine.js"),
+      fetchText("../machine/coi-serviceworker.js")
     ]).then(function (files) {
       window.__indexHtml = files[4];
       testPurity(files[0]);
@@ -1022,7 +1035,7 @@
       testCamera();
       testSurfaces();
       testThroughputHonesty();
-      testMachineRoom(files[5], files[6]);
+      testMachineRoom(files[5], files[6], files[7]);
 
       var passed = results.filter(function (r) { return r.pass; }).length;
       window.FBTestResults = {
