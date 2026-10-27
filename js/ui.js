@@ -327,8 +327,11 @@ var UI = (function () {
     });
     $("trace-end").addEventListener("click", endTraceUI);
 
-    // theme
+    // theme & shareable link
     $("btn-theme").addEventListener("click", toggleTheme);
+    if ($("btn-share")) {
+      $("btn-share").addEventListener("click", shareCurrentState);
+    }
     var saved = null;
     try { saved = localStorage.getItem("fbsimcity-theme"); } catch (e) { }
     applyTheme(saved === "day" ? "day" : "dark");
@@ -487,6 +490,9 @@ var UI = (function () {
       // ?lock=1 — leave the database locked, the way a forgotten
       // "nbackup -L" does. The delta then grows for as long as you watch.
       if (params.get("lock") === "1") Sim.toggleLock(simRef);
+      if (params.get("rate") !== null) setRange("ctl-rate", +params.get("rate"));
+      if (params.get("writes") !== null) setRange("ctl-update", +params.get("writes"));
+      if (params.get("cache") !== null) setRange("ctl-cache", +params.get("cache"));
       var pn = params.get("panel");
       if (pn && FB.byId[pn]) showBuilding(pn);
       // ?dock=latency|decisions — open a side dock directly
@@ -536,6 +542,57 @@ var UI = (function () {
 
   function toggleTheme() {
     applyTheme(document.body.classList.contains("day") ? "dark" : "day");
+  }
+
+  function buildShareUrl(s) {
+    var st = s || simRef;
+    var parts = [];
+    var scEl = $("ctl-scenario");
+    var sc = scEl ? scEl.value : "";
+    if (sc && SCENARIOS[sc]) parts.push("scenario=" + encodeURIComponent(sc));
+    if (document.body.classList.contains("day")) parts.push("theme=day");
+    if (infoSelectedId && els.info && !els.info.classList.contains("hidden")) {
+      parts.push("panel=" + encodeURIComponent(infoSelectedId));
+    }
+    if ($("decide-dock") && !$("decide-dock").classList.contains("hidden")) {
+      parts.push("dock=decisions");
+    } else if ($("latency-dock") && !$("latency-dock").classList.contains("hidden")) {
+      parts.push("dock=latency");
+    }
+    if (st && st.backup && st.backup.locked) parts.push("lock=1");
+    if (st) {
+      var defRate = (sc && SCENARIOS[sc]) ? SCENARIOS[sc].set.rate : 6;
+      var defWrites = (sc && SCENARIOS[sc]) ? SCENARIOS[sc].set.writes : 35;
+      var defCache = (sc && SCENARIOS[sc]) ? SCENARIOS[sc].set.cache : 64;
+      var curWrites = Math.round(st.updateRatio * 100);
+      var curCache = st.cache ? st.cache.length : 64;
+      if (st.queryRate !== defRate) parts.push("rate=" + st.queryRate);
+      if (curWrites !== defWrites) parts.push("writes=" + curWrites);
+      if (curCache !== defCache) parts.push("cache=" + curCache);
+    }
+    var base = location.origin + location.pathname;
+    return parts.length ? (base + "?" + parts.join("&")) : base;
+  }
+
+  function shareCurrentState() {
+    var url = buildShareUrl(simRef);
+    try {
+      if (location.pathname.indexOf("/test/") === -1 && history.replaceState) {
+        history.replaceState(null, "", url);
+      }
+    } catch (e) { }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url);
+      }
+    } catch (e) { }
+    var btn = $("btn-share");
+    if (btn) {
+      btn.textContent = "✓ Copied";
+      setTimeout(function () { btn.textContent = "🔗 Share"; }, 1800);
+    }
+    announce("Shareable link copied to clipboard");
+    return url;
   }
 
   // ---- overlays --------------------------------------------------------
@@ -1464,6 +1521,7 @@ var UI = (function () {
     updateStats: updateStats,
     handleKey: handleKey,
     announce: announce,
+    buildShareUrl: buildShareUrl,
     getTelemetryHistory: function () { return hist; }
   };
 })();

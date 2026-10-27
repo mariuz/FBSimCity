@@ -84,7 +84,7 @@
     var buttons = ["btn-sweep", "btn-burst", "btn-setstats", "btn-gbak",
                    "btn-nb0", "btn-nb1", "btn-lock", "btn-restore",
                    "btn-decide", "btn-trace", "btn-anatomy", "btn-tour",
-                   "btn-pause", "btn-speed", "btn-theme", "btn-help"];
+                   "btn-pause", "btn-speed", "btn-theme", "btn-share", "btn-help"];
     buttons.forEach(function (id) {
       t.ok("button #" + id + " exists", !!document.getElementById(id));
     });
@@ -697,7 +697,8 @@
     var scenarioKeys = Array.prototype.slice
       .call(document.getElementById("ctl-scenario").options)
       .map(function (o) { return o.value; }).filter(function (v) { return v; });
-    var knownParams = ["scenario", "theme", "warp", "panel", "lock", "dock"];
+    var knownParams = ["scenario", "theme", "warp", "panel", "lock", "dock",
+                       "rate", "writes", "cache"];
 
     urls.forEach(function (u) {
       var qs = u.split("?")[1].replace(/&amp;/g, "&");
@@ -1270,6 +1271,18 @@
     t.ok("telemetry readout displays synchronized metrics from the model",
       (telemReadout.textContent || "").indexOf("OST−OIT") !== -1);
     document.getElementById("telemetry-close").click();
+
+    // One-click "Copy shareable link" button & URL serializer:
+    UI.showBuilding("mvcc");
+    s2.queryRate = 15;
+    s2.backup.locked = true;
+    var shareUrl = UI.buildShareUrl(s2);
+    t.ok("buildShareUrl serialises active panel, dock, lock, and rate overrides",
+      shareUrl.indexOf("panel=mvcc") !== -1 &&
+      shareUrl.indexOf("dock=decisions") !== -1 &&
+      shareUrl.indexOf("lock=1") !== -1 &&
+      shareUrl.indexOf("rate=15") !== -1,
+      shareUrl);
   }
 
   // ---- 8d. the throughput readout is not an estimate -------------------

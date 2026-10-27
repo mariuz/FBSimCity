@@ -275,7 +275,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   and **p50 / p95 latency**, complete with vertical markers showing where a
   scenario started, a sweep ran, or an Operator Decision was applied.
 
-### 19. One-click "Copy shareable link" button & live URL sync
+### 19. [x] One-click "Copy shareable link" button & live URL sync *(Completed)*
 - **Today in `ui.js`:** `applyDeepLink()` supports rich URL parameters
   (`?scenario=...&theme=...&warp=...&panel=...&dock=...&lock=1`), and the
   machine room supports `?seq=...`, but there is no button in the UI to export
