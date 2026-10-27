@@ -103,7 +103,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   selectivity (including stale statistics after bulk writes and `SET STATISTICS
   INDEX`).
 
-### 7. Commit-order snapshots (`READ COMMITTED READ CONSISTENCY` in Firebird 4+)
+### 7. [x] Commit-order snapshots (`READ COMMITTED READ CONSISTENCY` in Firebird 4+) — *Completed*
 - **Today in `sim.js`:** Visibility is modeled as a simple `txn < OIT`
   comparison.
 - **In Firebird 4+:** `READ COMMITTED READ CONSISTENCY` is the default

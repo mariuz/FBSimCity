@@ -103,6 +103,14 @@
     </select>
   </div>
 
+  <div class="ctl">
+    <label for="ctl-isolation">Isolation</label>
+    <select id="ctl-isolation">
+      <option value="read_consistency" selected>READ CONSISTENCY (FB 4+)</option>
+      <option value="snapshot">SNAPSHOT (CONCURRENCY)</option>
+    </select>
+  </div>
+
   <div class="ctl switch danger">
     <label><input type="checkbox" id="ctl-longtxn"> Long-running transaction
       <span class="hint">pins the OIT — garbage piles up</span></label>

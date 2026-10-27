@@ -50,6 +50,10 @@ var Sim = (function () {
       lockMode: "wait",      // wait | nowait (SET TRANSACTION WAIT / NO WAIT)
       deadlocks: 0,          // true wait-for cycle rollbacks
       noWaitAborts: 0,       // immediate conflict aborts under NO WAIT
+      isolationMode: "read_consistency", // read_consistency | snapshot
+      commitNumber: 1000,    // Firebird 4+ commit-order counter (CN)
+      writeRestarts: 0,      // statement restarts on write conflict (READ CONSISTENCY)
+      updateConflicts: 0,    // isc_update_conflict rollbacks (SNAPSHOT / CONCURRENCY)
 
       // sweep
       sweepTimer: 0, sweepActive: false, sweepProgress: 0, sweepBlocked: false,
@@ -129,7 +133,8 @@ var Sim = (function () {
       s.tables.push({
         versions: 1, flash: 0, chain: [960 + i], gcFlag: false,
         lockHolder: null, waiters: [],
-        selectivity: baseSel, statDrift: 0
+        selectivity: baseSel, statDrift: 0,
+        lastCommitCn: 960 + i
       });
     }
     setCacheSize(s, s.cacheSize);
@@ -588,7 +593,7 @@ var Sim = (function () {
       wp("blrgen", 0.15, "blr"),
       wp("security", 0.08),
       wp("cmp", 0.25, "compile"),
-      wp("exec", 0.15)
+      wp("exec", 0.15, "execstart")
     ];
     for (var i = 0; i < reads; i++) path.push(wp("cache", 0.1, "page"));
     if (isUpdate) {
@@ -614,6 +619,9 @@ var Sim = (function () {
       plan: isUpdate ? "INDEX+UPD" : "NATURAL",
       locksHeld: [],
       waitingOn: -1,
+      hadLockWait: false,
+      startCn: s.commitNumber,
+      stmtCn: s.commitNumber,
       phase: "sql",           // sql -> blr -> result
       txn: null,
       snap: null,             // OAT when this query's transaction started
@@ -696,6 +704,13 @@ var Sim = (function () {
         }
         break;
       }
+      case "execstart":
+        // Firebird 4+ READ COMMITTED READ CONSISTENCY: establish a fresh
+        // statement-level commit-order snapshot (CN) when execution starts.
+        if (s.isolationMode === "read_consistency") {
+          q.stmtCn = s.commitNumber;
+        }
+        break;
       case "page":
         // Multi-table updates lock their first relation during the initial
         // read/modify step before requesting the second relation at LOCK.
@@ -788,12 +803,41 @@ var Sim = (function () {
         // Queue behind the current lock holder on this table
         q.waiting = true;
         q.waitingOn = q.table;
+        q.hadLockWait = true;
         if (lt.waiters.indexOf(q) === -1) lt.waiters.push(q);
         q.dwell += 0.85 + Math.min(1.5, lt.waiters.length * 0.28);
         break;
       }
       case "version": {
         var t = s.tables[q.table !== undefined ? q.table : Math.floor(Math.random() * TABLE_COUNT)];
+        // Check whether a concurrent writer committed a newer version on this
+        // table after our snapshot started (t.lastCommitCn > q.startCn).
+        if (!q.traced && t.lastCommitCn > q.startCn) {
+          if (s.isolationMode === "snapshot") {
+            // SNAPSHOT (CONCURRENCY): cannot overwrite a version committed
+            // after our transaction snapshot began (isc_update_conflict).
+            if (q.hadLockWait || Math.random() < 0.45) {
+              s.updateConflicts++;
+              say(s, "Update conflict on T" + q.table + ": txn " + q.txn +
+                " rolled back (committed CN " + t.lastCommitCn +
+                " > snapshot CN " + q.startCn + ").");
+              finishTxn(s, q, true);
+              q.phase = "rollback";
+              q.dwell = 0.06;
+              q.path = q.path.slice(0, q.idx + 1)
+                .concat([wp("exec", 0.05), wp("yvalve", 0.05), wp("harbor", 0, "done")]);
+              break;
+            }
+          } else {
+            // Firebird 4+ READ COMMITTED READ CONSISTENCY: refresh the
+            // statement-level commit-order snapshot (CN) and restart the
+            // write against the newly committed version without rolling back.
+            s.writeRestarts++;
+            q.stmtCn = s.commitNumber;
+            q.startCn = s.commitNumber;
+            q.dwell += 0.06;
+          }
+        }
         chaseVersionChain(s, q, t);
         if (t.versions < MAX_CHAIN) {
           t.chain.push(q.txn);
@@ -822,6 +866,10 @@ var Sim = (function () {
           break;
         }
         finishTxn(s, q, false);
+        s.commitNumber++;
+        if (q.table !== undefined && s.tables[q.table]) {
+          s.tables[q.table].lastCommitCn = s.commitNumber;
+        }
         // Forced writes (MON$FORCED_WRITES): when enabled (default), the
         // commit waits for its dirtied page (and any careful-write
         // prerequisite in the precedence graph) to be flushed to disk.
@@ -1508,6 +1556,15 @@ var Sim = (function () {
       "optimizer shifting to NATURAL + SORT.");
   }
 
+  function setIsolationMode(s, mode) {
+    if (mode !== "read_consistency" && mode !== "snapshot") return;
+    if (s.isolationMode === mode) return;
+    s.isolationMode = mode;
+    say(s, mode === "read_consistency"
+      ? "Isolation set to READ COMMITTED READ CONSISTENCY — commit-order snapshots & write-conflict restarts."
+      : "Isolation set to SNAPSHOT (CONCURRENCY) — concurrent updates to the same row raise update conflicts.");
+  }
+
   function setLockMode(s, mode) {
     if (mode !== "wait" && mode !== "nowait") return;
     if (s.lockMode === mode) return;
@@ -1606,6 +1663,7 @@ var Sim = (function () {
     setCacheSize: setCacheSize,
     recomputeStatistics: recomputeStatistics,
     degradeStatistics: degradeStatistics,
+    setIsolationMode: setIsolationMode,
     setLockMode: setLockMode,
     setForcedWrites: setForcedWrites,
     setGcPolicy: setGcPolicy,

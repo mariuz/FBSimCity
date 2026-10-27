@@ -214,6 +214,11 @@ var UI = (function () {
         Sim.setLockMode(sim, this.value);
       });
     }
+    if ($("ctl-isolation")) {
+      $("ctl-isolation").addEventListener("change", function () {
+        Sim.setIsolationMode(sim, this.value);
+      });
+    }
     $("ctl-scenario").addEventListener("change", function () {
       if (this.value) applyScenario(this.value);
     });
@@ -677,7 +682,27 @@ var UI = (function () {
       { id: "act-longtxn", label: function (s) {
           return s.pinned !== null ? "Commit the forgotten transaction"
                                    : "Forget to commit a transaction";
-        }, fn: function (s) { setCheck("ctl-longtxn", s.pinned === null); } }
+        }, fn: function (s) { setCheck("ctl-longtxn", s.pinned === null); } },
+      { id: "act-isolation", label: function (s) {
+          return "Isolation: " + (s.isolationMode === "snapshot"
+            ? "SNAPSHOT (CONCURRENCY)"
+            : "READ CONSISTENCY");
+        }, fn: function (s) {
+          var next = s.isolationMode === "snapshot" ? "read_consistency" : "snapshot";
+          Sim.setIsolationMode(s, next);
+          setSelect("ctl-isolation", next);
+        } }
+    ],
+    mvcc: [
+      { id: "act-isolation-mvcc", label: function (s) {
+          return "Isolation: " + (s.isolationMode === "snapshot"
+            ? "SNAPSHOT (CONCURRENCY)"
+            : "READ CONSISTENCY");
+        }, fn: function (s) {
+          var next = s.isolationMode === "snapshot" ? "read_consistency" : "snapshot";
+          Sim.setIsolationMode(s, next);
+          setSelect("ctl-isolation", next);
+        } }
     ],
     pio: [
       { id: "act-fw", label: function (s) {
@@ -764,7 +789,10 @@ var UI = (function () {
     var html = "<h3>Busiest table — live version chain</h3>" +
       "<p class='fine'>Back-version reads (<code>MON$BACKVERSION_READS</code>): <b>" +
       s.backversionReads + "</b> &middot; Purges (<code>MON$RECORD_PURGES</code>): <b>" +
-      s.purges + "</b> &middot; <code>GCPolicy</code>: <b>" + s.gcPolicy + "</b></p>";
+      s.purges + "</b> &middot; <code>GCPolicy</code>: <b>" + s.gcPolicy + "</b></p>" +
+      "<p class='fine'>Commit CN: <b>" + s.commitNumber +
+      "</b> &middot; Write restarts (<code>READ CONSISTENCY</code>): <b>" + s.writeRestarts +
+      "</b> &middot; Update conflicts (<code>SNAPSHOT</code>): <b>" + s.updateConflicts + "</b></p>";
     var chain = t.chain, shown = Math.min(chain.length, 10);
     for (var j = 0; j < shown; j++) {
       var idx = chain.length - 1 - j; // newest first

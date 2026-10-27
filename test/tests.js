@@ -64,6 +64,7 @@
       { id: "ctl-forcedwrites", doc: "Forced writes" },
       { id: "ctl-gcpolicy", doc: "GC policy" },
       { id: "ctl-lockmode", doc: "Lock mode" },
+      { id: "ctl-isolation", doc: "Isolation" },
       { id: "ctl-longtxn", doc: "Long-running transaction" },
       { id: "ctl-scenario", doc: "Scenario" },
       { id: "ctl-replmode", doc: "Replication mode" },
@@ -199,6 +200,24 @@
     t.ok("SET STATISTICS INDEX restores B-Tree index scans",
       optStale.statsRecomputed === 1 && optStale.indexScans > 0,
       "statsRecomputed=" + optStale.statsRecomputed + ", indexScans=" + optStale.indexScans);
+
+    // Firebird 4+ READ COMMITTED READ CONSISTENCY vs SNAPSHOT (CONCURRENCY):
+    // Under READ CONSISTENCY, concurrent updates to a row that committed
+    // since our snapshot started restart the write against the new commit-order
+    // snapshot (writeRestarts > 0, updateConflicts === 0); under SNAPSHOT,
+    // they raise isc_update_conflict and roll back (updateConflicts > 0).
+    var isoRc = Sim.create(), isoSnap = Sim.create();
+    isoRc.queryRate = 14; isoRc.updateRatio = 0.9;
+    isoSnap.queryRate = 14; isoSnap.updateRatio = 0.9;
+    Sim.setIsolationMode(isoSnap, "snapshot");
+    run(isoRc, 40); run(isoSnap, 40);
+    t.ok("READ CONSISTENCY restarts concurrent updates on new CN",
+      isoRc.writeRestarts > 0 && isoRc.updateConflicts === 0,
+      "writeRestarts=" + isoRc.writeRestarts + ", updateConflicts=" + isoRc.updateConflicts);
+    t.ok("SNAPSHOT (CONCURRENCY) rolls back conflicting updates",
+      isoSnap.updateConflicts > 0 && isoSnap.rollbacks > isoRc.rollbacks,
+      "updateConflicts=" + isoSnap.updateConflicts + ", rollbacks=" + isoSnap.rollbacks +
+      " vs rc rollbacks=" + isoRc.rollbacks);
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------
@@ -687,6 +706,8 @@
       applied: s.repl.applied, sorts: s.sorts, sortSpills: s.sortSpills,
       indexScans: s.indexScans, naturalScans: s.naturalScans,
       statsRecomputed: s.statsRecomputed,
+      commitNumber: s.commitNumber, writeRestarts: s.writeRestarts,
+      updateConflicts: s.updateConflicts,
       time: s.time
     };
     Object.keys(nums).forEach(function (k) {
@@ -735,6 +756,7 @@
               s.sweepEnabled = (cases % 3) !== 0;
               Sim.setForcedWrites(s, (cases % 4) !== 0);
               Sim.setLockMode(s, (cases % 2) ? "wait" : "nowait");
+              Sim.setIsolationMode(s, (cases % 3) ? "read_consistency" : "snapshot");
               Sim.setGcPolicy(s, ["combined", "cooperative", "background"][cases % 3]);
               if (cases % 5 === 0) Sim.setLongTxn(s, true);
               if (cases % 7 === 0) Sim.toggleLock(s);

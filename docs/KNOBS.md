@@ -26,6 +26,7 @@ Three honesty levels:
 | Forced writes | on/off | Firebird's `MON$FORCED_WRITES` (`gfix -write sync/async`): when on (default), commits flush dirty pages synchronously in careful-write precedence order (`CCH_precedence`); when off, commits return fast in RAM and dirty buffers are flushed periodically | **real** mechanism, **scaled** timings — turning forced writes off cuts commit latency at the cost of dirty-buffer accumulation and crash exposure |
 | GC policy | `combined`, `cooperative`, `background` | Firebird's `GCPolicy`: whether readers purge dead back-versions inline (`cooperative`, charging the reader's `version` latency and marking a cache buffer dirty), flag pages in `gc_record` bitmaps for a background thread (`background`), or both (`combined`) | **real** mechanism, **scaled** rates — `firebird-wasm` sets `cooperative` in the DPB; SuperServer defaults to `combined` |
 | Lock mode | `WAIT`, `NO WAIT` | `SET TRANSACTION WAIT` vs `NO WAIT`: whether a writer conflicting on a locked table queues at the Lock Manager Tower (and participates in deadlock cycle scans) or aborts immediately | **real** mechanism over 12 relation lock queues (`src/jrd/lock/lock.cpp`) |
+| Isolation | `READ CONSISTENCY`, `SNAPSHOT` | Firebird 4+ `READ COMMITTED READ CONSISTENCY` vs `SNAPSHOT` (`CONCURRENCY`): whether concurrent updates to a row that committed since our snapshot started trigger a statement-level commit-order (`CN`) restart or abort with an update conflict (`isc_update_conflict`) | **real** mechanism (`src/jrd/tra.cpp`, `src/jrd/vio.cpp`) |
 | Long-running transaction | on/off | Starts a transaction that never commits, pinning the OIT | **real** — this is exactly how a forgotten transaction stalls GC |
 | Rush hour ×60 | button | Injects 60 queries at once | **modeled** — a convenience for watching queueing |
 | SET STATISTICS | button | Recomputes cached `RDB$STATISTICS` selectivity across all 12 tables (`SET STATISTICS INDEX`), clearing statistics drift accumulated during writes so the optimizer returns to `B-Tree Gardens` instead of falling back to natural scans + `Sort Yard` | **real** mechanism (`src/jrd/opt.cpp`), **scaled** selectivity thresholds |
@@ -122,8 +123,6 @@ has to discover them by reading the source:
   run is not a neutral starting point — it is a state you will never meet.
 - **Page access is a two-tier hot/cold distribution**, not a real access
   pattern derived from tables and indexes.
-- **Commit-order snapshots (Firebird 4+) are not modeled.** Visibility here
-  is a simple `txn < OIT` comparison.
 - **One database, one attachment pool, no Classic/Super distinction**, no
   page-level locks, no ASTs.
 - **Replication is one replica and one dial.** Real deployments have several
