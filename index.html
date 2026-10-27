@@ -205,9 +205,17 @@
       <h3>Query trace</h3>
       <button id="trace-end" aria-label="End trace">×</button>
     </div>
+    <select id="trace-profile" aria-label="Trace query profile">
+      <option value="update" selected>UPDATE — cache → lock → VIO → commit</option>
+      <option value="select_index">SELECT — B-Tree index lookup</option>
+      <option value="select_sort">SELECT — natural scan + Sort Yard</option>
+      <option value="deadlock">UPDATE — lock conflict / deadlock abort</option>
+    </select>
     <h4 id="trace-stage"></h4>
     <p id="trace-text"></p>
     <div class="tour-nav">
+      <button id="trace-inspect" title="Open this station's C++ source notes">Inspect</button>
+      <button id="trace-prev" title="Step back to previous station">← Prev</button>
       <button id="trace-auto">Auto play</button>
       <button id="trace-step" class="primary">Next step →</button>
     </div>

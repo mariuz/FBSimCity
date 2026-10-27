@@ -71,7 +71,8 @@
       { id: "ctl-replmode", doc: "Replication mode" },
       { id: "ctl-replhealth", doc: "Replica health" },
       { id: "ctl-tempcache", doc: "Sort memory" },
-      { id: "ctl-stmtcache", doc: "Statement cache" }
+      { id: "ctl-stmtcache", doc: "Statement cache" },
+      { id: "trace-profile", doc: "Trace profile" }
     ];
     controls.forEach(function (c) {
       t.ok("control #" + c.id + " exists", !!document.getElementById(c.id));
@@ -1232,6 +1233,25 @@
     t.ok("District Info (#info-panel) and Operator Decisions (#decide-dock) stack without closing each other",
       !document.getElementById("info-panel").classList.contains("hidden") &&
       !document.getElementById("decide-dock").classList.contains("hidden"));
+
+    // Selectable query trace profiles & step-by-step replay controls:
+    var trSim = Sim.create();
+    trSim.queryRate = 0;
+    Sim.startTrace(trSim, "select_index");
+    t.ok("select_index trace profile spawns a SELECT routed through B-Tree Gardens",
+      trSim.tracedQ && trSim.tracedQ.kind === "select" &&
+      trSim.tracedQ.path.some(function (w) { return w.at === "btr"; }));
+    Sim.startTrace(trSim, "select_sort");
+    t.ok("select_sort trace profile spawns a SELECT routed through Sort Yard",
+      trSim.tracedQ && trSim.tracedQ.kind === "select" &&
+      trSim.tracedQ.path.some(function (w) { return w.at === "sort"; }));
+    Sim.startTrace(trSim, "deadlock");
+    run(trSim, 1); // parks at harbor (idx=1)
+    Sim.traceNext(trSim);
+    run(trSim, 1.5); // advances to yvalve (idx=2)
+    t.eq("traceNext advances traced query to yvalve", trSim.traceStage, "yvalve");
+    Sim.tracePrev(trSim);
+    t.eq("tracePrev steps traced query back to harbor", trSim.traceStage, "harbor");
   }
 
   // ---- 8d. the throughput readout is not an estimate -------------------

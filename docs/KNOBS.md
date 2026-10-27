@@ -32,6 +32,7 @@ Three honesty levels:
 | Long-running transaction | on/off | Starts a transaction that never commits, pinning the OIT | **real** — this is exactly how a forgotten transaction stalls GC |
 | Rush hour ×60 | button | Injects 60 queries at once | **modeled** — a convenience for watching queueing |
 | SET STATISTICS | button | Recomputes cached `RDB$STATISTICS` selectivity across all 12 tables (`SET STATISTICS INDEX`), clearing statistics drift accumulated during writes so the optimizer returns to `B-Tree Gardens` instead of falling back to natural scans + `Sort Yard` | **real** mechanism (`src/jrd/opt.cpp`), **scaled** selectivity thresholds |
+| Trace profile | `UPDATE`, `SELECT (index)`, `SELECT (sort)`, `UPDATE (deadlock)` | Selects which query profile `Trace` follows step by step through the city (`#trace-profile`, with `← Prev`, `Next step →`, `Auto play`, and `Inspect` buttons) | **real** pipeline paths (`src/dsql/`, `src/jrd/`) |
 | Speed | 0.5–4× | Multiplies the simulation timestep | n/a — presentation only |
 
 ## Replication

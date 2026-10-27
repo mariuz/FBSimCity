@@ -279,7 +279,7 @@ body.day #inspector-toggle:hover { color: #141c36; }
 .tour-nav { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* ---- scenario select ---- */
-#ctl-scenario {
+#ctl-scenario, #trace-profile {
   width: 100%;
   background: rgba(40,50,90,0.75);
   color: #dce4ff;
@@ -288,6 +288,7 @@ body.day #inspector-toggle:hover { color: #141c36; }
   padding: 5px 6px;
   font: 12px "Segoe UI", sans-serif;
 }
+#trace-profile { margin: 6px 0 4px; }
 
 /* ---- stats sparklines / version ---- */
 #stats .stat { display: inline-flex; align-items: center; gap: 5px; }
@@ -682,7 +683,7 @@ body.day #tour h3 { color: #b26b00; }
 body.day #tour p, body.day #trace-panel p { color: #33406b; }
 body.day #tour-step { color: #6b7aa8; }
 body.day #trace-panel h3 { color: #1971c2; }
-body.day #ctl-scenario { background: rgba(255,255,255,0.9); color: #24304f; border-color: rgba(90,110,180,0.4); }
+body.day #ctl-scenario, body.day #trace-profile { background: rgba(255,255,255,0.9); color: #24304f; border-color: rgba(90,110,180,0.4); }
 body.day .overlay { background: rgba(180,195,225,0.5); }
 body.day table.keys { color: #33406b; }
 body.day table.keys kbd { background: rgba(220,228,248,0.9); color: #24304f; border-color: rgba(90,110,180,0.45); }

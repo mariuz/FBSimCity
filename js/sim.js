@@ -833,6 +833,18 @@ var Sim = (function () {
       }
       case "lock": {
         pruneLocks(s);
+        if (q.traced && q.traceProfile === "deadlock") {
+          s.lockWaits++;
+          s.deadlocks++;
+          s.deadlockFlash = 1;
+          s.traceNote = "deadlock";
+          say(s, "Deadlock scan: traced txn " + q.txn + " rolled back at Lock Manager Tower.");
+          finishTxn(s, q, true);
+          q.phase = "rollback";
+          q.path = q.path.slice(0, q.idx + 1)
+            .concat([wp("exec", 0.05), wp("yvalve", 0.05), wp("harbor", 0, "done")]);
+          break;
+        }
         if (!q.traced && q.locksHeld.length === 0 && q.firstTable !== q.table) {
           var ftLock = s.tables[q.firstTable];
           if (!ftLock.lockHolder) {
@@ -1034,13 +1046,76 @@ var Sim = (function () {
 
   // ---- query trace -----------------------------------------------------
 
-  function startTrace(s) {
-    if (s.tracedQ) return;
-    s.tracedQ = spawnQuery(s, true);
+  function startTrace(s, profile) {
+    if (s.tracedQ && !profile) return;
+    if (s.tracedQ) endTrace(s);
+    var prof = profile || s.traceProfile || "update";
+    s.traceProfile = prof;
+    var q = spawnQuery(s, true);
+    q.traceProfile = prof;
+    if (prof === "select_index" || prof === "select_sort") {
+      if (q.txn !== null) {
+        var ai = s.active.indexOf(q.txn);
+        if (ai >= 0) s.active.splice(ai, 1);
+        q.txn = null;
+        refreshMarkers(s);
+      }
+      q.kind = "select";
+      q.needsPlan = false;
+      q.planApplied = true;
+      q.plan = prof === "select_index" ? "INDEX" : "NATURAL+SORT";
+      var head = [
+        wp("harbor", 0.05),
+        wp("yvalve", 0.12),
+        wp("lexer", 0.15),
+        wp("parser", 0.2),
+        wp("blrgen", 0.15, "blr"),
+        wp("security", 0.08),
+        wp("cmp", 0.25, "compile"),
+        wp("exec", 0.15, "execstart"),
+        wp("cache", 0.1, "page"),
+        wp("mvcc", 0.04, "rversion")
+      ];
+      if (prof === "select_index") {
+        head.push(wp("btr", 0.14, "btr"));
+      } else {
+        head.push(wp("cache", 0.08, "page"), wp("sort", 0.15, "sort"));
+      }
+      head.push(wp("exec", 0.08), wp("yvalve", 0.06, "result"), wp("harbor", 0, "done"));
+      q.path = head;
+    }
+    s.tracedQ = q;
     s.traceStep = true;
     s.traceStage = "harbor";
     s.traceNote = "";
-    say(s, "Tracing one UPDATE through the whole pipeline.");
+    var label = prof === "select_index" ? "SELECT (B-Tree index lookup)"
+      : prof === "select_sort" ? "SELECT (natural scan + Sort Yard)"
+      : prof === "deadlock" ? "UPDATE (lock conflict / deadlock abort)"
+      : "UPDATE";
+    say(s, "Tracing one " + label + " through the whole pipeline.");
+  }
+
+  function tracePrev(s) {
+    var q = s.tracedQ;
+    if (!q) return;
+    var curIdx = Math.max(0, q.idx - 1);
+    var prevIdx = Math.max(0, curIdx - 1);
+    var step = q.path[prevIdx];
+    q.x = step.x;
+    q.y = step.y;
+    q.trail = [];
+    q.idx = prevIdx + 1;
+    var sawBlr = false;
+    for (var i = 0; i <= prevIdx; i++) {
+      if (q.path[i].act === "blr" || q.path[i].act === "stmtcache") sawBlr = true;
+    }
+    if (step.act === "result") q.phase = "result";
+    else if (step.act === "lock" && q.traceProfile === "deadlock") q.phase = "rollback";
+    else q.phase = sawBlr ? "blr" : "sql";
+    s.traceStage = step.at;
+    s.traceNote = "";
+    s.traceStep = true;
+    q.dwell = 1e9;
   }
 
   function traceNext(s) {
@@ -1974,6 +2049,7 @@ var Sim = (function () {
     startSweep: startSweep,
     burst: burst,
     startTrace: startTrace,
+    tracePrev: tracePrev,
     traceNext: traceNext,
     traceAuto: traceAuto,
     tracePause: tracePause,

@@ -38,15 +38,18 @@ var UI = (function () {
     pio: { name: "Database File (PIO)",
       text: "Physical I/O reads the page from the database file and hauls it up into a cache buffer, evicting the least-recently-used page if the cache is full." },
     lock: { name: "Lock Manager Tower (LOCK)",
-      text: "Before modifying, a lock on the resource is requested in the shared-memory lock table. Contending writers queue here." },
+      text: "Before modifying, a lock on the resource is requested in the shared-memory lock table. Contending writers queue here.",
+      deadlock: "Deadlock victim — the Lock Manager detected a wait-for cycle and rolled back this transaction, sending an error back to the client." },
     mvcc: { name: "Record Version Towers (VIO)",
-      text: "The UPDATE does not overwrite the row: a new version is written and the old one is chained behind it as a delta. Older snapshots can still read the old version." },
+      text: "Record version check / write: UPDATE chains a new version on top of the old delta; SELECT walks the chain until it finds a version visible to its snapshot." },
     tra: { name: "Transaction Hall (TRA)",
       text: "COMMIT: the transaction's state bits flip on a Transaction Inventory Page. The new record version is now the committed truth." },
     btr: { name: "B-Tree Gardens (BTR)",
       text: "An index walk resolves the search condition to record numbers without scanning the table." },
     sort: { name: "Sort Yard (SORT)",
-      text: "No index supplies the required order — the sorter builds sorted runs and merges them." }
+      text: "No index supplies the required order — the sorter builds sorted runs and merges them.",
+      inmemory: "In-memory sort — the working set fits inside TempCacheLimit, so runs merge in RAM.",
+      spill: "Sort spill — the working set exceeded TempCacheLimit and spilled scratch runs to disk." }
   };
 
   // ---- scenarios -------------------------------------------------------
@@ -270,6 +273,35 @@ var UI = (function () {
 
     // trace
     $("btn-trace").addEventListener("click", startTraceUI);
+    if ($("trace-profile")) {
+      $("trace-profile").addEventListener("change", function () {
+        Sim.startTrace(sim, this.value);
+        $("trace-auto").textContent = "Auto play";
+        lastStageShown = null;
+        lastNoteShown = null;
+        updateTrace();
+      });
+    }
+    if ($("trace-prev")) {
+      $("trace-prev").addEventListener("click", function () {
+        Sim.tracePrev(sim);
+        $("trace-auto").textContent = "Auto play";
+        lastStageShown = null;
+        lastNoteShown = null;
+        updateTrace();
+        if (onFocus && sim.traceStage && FB.byId[sim.traceStage]) {
+          onFocus(sim.traceStage, 1.2);
+        }
+      });
+    }
+    if ($("trace-inspect")) {
+      $("trace-inspect").addEventListener("click", function () {
+        if (sim.traceStage && FB.byId[sim.traceStage]) {
+          showBuilding(sim.traceStage);
+          if (onFocus) onFocus(sim.traceStage, 1.25);
+        }
+      });
+    }
     $("trace-step").addEventListener("click", function () { Sim.traceNext(sim); });
     $("trace-auto").addEventListener("click", function () {
       if (sim.traceStep) { Sim.traceAuto(sim); this.textContent = "Pause steps"; }
@@ -488,9 +520,12 @@ var UI = (function () {
 
   function startTraceUI() {
     expandInspectorRail();
+    var prof = $("trace-profile") ? $("trace-profile").value : "update";
     if (!simRef.tracedQ) {
-      Sim.startTrace(simRef);
+      Sim.startTrace(simRef, prof);
       $("trace-auto").textContent = "Auto play";
+      lastStageShown = null;
+      lastNoteShown = null;
     }
     els.trace.classList.remove("hidden");
     updateTrace();

@@ -251,7 +251,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   **Latency**, **Trace**) and allow panels to stack cleanly without covering
   `#controls` or the city center.
 
-### 17. Selectable query trace profiles & step-by-step replay controls
+### 17. [x] Selectable query trace profiles & step-by-step replay controls *(Completed)*
 - **Today in `ui.js`:** Clicking **Trace** (`#btn-trace`) always spawns a
   generic `UPDATE` (`spawnQuery(s, true)`) with `deadlock = false`, and the
   trace bar only follows the particle in real time until it exits.
