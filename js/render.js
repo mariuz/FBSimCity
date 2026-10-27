@@ -225,7 +225,18 @@ var Render = (function () {
       var cy = b.y + 0.8 + Math.floor(i / cols) * chh;
       var fill = T.cacheEmpty;
       if (slot.page >= 0) fill = T.cacheResident;
-      diamond(ctx, cam, cx, cy, 0.24, fill, null);
+      var hotBorder = null;
+      if (slot.page >= 0 && s.time > 0 && (s.time - slot.lastUse) < 2.5) {
+        hotBorder = "rgba(116,192,252,0.55)";
+      }
+      diamond(ctx, cam, cx, cy, 0.24, fill, hotBorder);
+      if (slot.dirty && cam.zoom > 0.65) {
+        var dp = proj(cam, cx, cy, 0.08);
+        ctx.fillStyle = "#fcc419";
+        ctx.beginPath();
+        ctx.arc(dp[0], dp[1], Math.max(1.2, 1.8 * cam.zoom), 0, Math.PI * 2);
+        ctx.fill();
+      }
       if (slot.flash > 0) {
         // Redundant encoding: hit, miss and dirty differ in hue, in
         // luminance and in size, so none of the three depends on colour
@@ -804,6 +815,130 @@ var Render = (function () {
     return best;
   }
 
+  function drawSubsystems(ctx, cam, s, time) {
+    // 1. B-Tree Gardens (btr): root -> internal -> leaf fanout tree on roof
+    var btr = FB.byId.btr;
+    if (btr) {
+      var bz = btr.h + 0.06;
+      var root = proj(cam, btr.x + btr.w * 0.5, btr.y + btr.d * 0.22, bz);
+      var mid = [
+        proj(cam, btr.x + btr.w * 0.3, btr.y + btr.d * 0.52, bz),
+        proj(cam, btr.x + btr.w * 0.7, btr.y + btr.d * 0.52, bz)
+      ];
+      var leaves = [
+        proj(cam, btr.x + btr.w * 0.16, btr.y + btr.d * 0.82, bz),
+        proj(cam, btr.x + btr.w * 0.39, btr.y + btr.d * 0.82, bz),
+        proj(cam, btr.x + btr.w * 0.61, btr.y + btr.d * 0.82, bz),
+        proj(cam, btr.x + btr.w * 0.84, btr.y + btr.d * 0.82, bz)
+      ];
+      var activeLeaf = (s.btrLeaf || 0) % 4;
+      var activeMid = activeLeaf < 2 ? 0 : 1;
+      var bf = Math.max(0, s.btrFlash || 0);
+      ctx.save();
+      ctx.lineWidth = Math.max(1, 1.4 * cam.zoom);
+      for (var mi = 0; mi < 2; mi++) {
+        ctx.strokeStyle = (bf > 0 && mi === activeMid)
+          ? "rgba(99,230,190," + (0.45 + bf * 0.55) + ")"
+          : "rgba(99,230,190,0.28)";
+        ctx.beginPath();
+        ctx.moveTo(root[0], root[1]);
+        ctx.lineTo(mid[mi][0], mid[mi][1]);
+        ctx.stroke();
+      }
+      for (var li = 0; li < 4; li++) {
+        var parentMid = li < 2 ? mid[0] : mid[1];
+        ctx.strokeStyle = (bf > 0 && li === activeLeaf)
+          ? "rgba(99,230,190," + (0.45 + bf * 0.55) + ")"
+          : "rgba(99,230,190,0.25)";
+        ctx.beginPath();
+        ctx.moveTo(parentMid[0], parentMid[1]);
+        ctx.lineTo(leaves[li][0], leaves[li][1]);
+        ctx.stroke();
+      }
+      var allNodes = [root, mid[0], mid[1], leaves[0], leaves[1], leaves[2], leaves[3]];
+      for (var ni = 0; ni < allNodes.length; ni++) {
+        var isHitNode = bf > 0 &&
+          (ni === 0 || ni === 1 + activeMid || ni === 3 + activeLeaf);
+        ctx.fillStyle = isHitNode ? "#e6fcf5" : "#63e6be";
+        ctx.beginPath();
+        ctx.arc(allNodes[ni][0], allNodes[ni][1],
+          (isHitNode ? 2.8 : 2.0) * cam.zoom, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (s.btrSplitFlash > 0) {
+        var spLeaf = leaves[activeLeaf];
+        ctx.strokeStyle = "rgba(255,212,59," + Math.min(1, s.btrSplitFlash) + ")";
+        ctx.lineWidth = 1.8 * cam.zoom;
+        ctx.beginPath();
+        ctx.arc(spLeaf[0], spLeaf[1], (5 + (1 - s.btrSplitFlash) * 6) * cam.zoom, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // 2. Sort Yard (sort): merge-sort run stacks + temporary spill chute to PIO
+    var srt = FB.byId.sort;
+    if (srt) {
+      var runs = Math.max(1, Math.min(6, Math.ceil(s.sortRuns || 1)));
+      for (var ri = 0; ri < runs; ri++) {
+        var rx = srt.x + 0.55 + ri * 0.65;
+        var ry = srt.y + 1.2;
+        var rh = 0.18 + ((ri % 3) + 1) * 0.12;
+        drawSlab(ctx, cam, rx, ry, 0.48, 0.48, srt.h, srt.h + rh,
+          s.sortSpillFlash > 0.2 ? "#ffa94d" : "#a9e34b", 0);
+      }
+      if (s.sortSpillFlash > 0) {
+        var pio = FB.byId.pio;
+        var pSort = proj(cam, srt.x + srt.w / 2, srt.y + srt.d, srt.h);
+        var pPio = proj(cam, pio.x + pio.w * 0.75, pio.y + pio.d * 0.5, -1.0);
+        ctx.save();
+        ctx.strokeStyle = "rgba(255,146,43," + Math.min(1, s.sortSpillFlash * 0.9) + ")";
+        ctx.lineWidth = Math.max(1.5, 2.5 * cam.zoom);
+        ctx.setLineDash([5 * cam.zoom, 4 * cam.zoom]);
+        ctx.beginPath();
+        ctx.moveTo(pSort[0], pSort[1]);
+        ctx.lineTo(pPio[0], pPio[1]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
+    }
+
+    // 3. Lock Manager Tower (lock): queued writer holding bays + deadlock ring
+    var lck = FB.byId.lock;
+    if (lck && s.tables) {
+      var totalWaiters = 0;
+      for (var ti = 0; ti < s.tables.length; ti++) {
+        totalWaiters += s.tables[ti].waiters ? s.tables[ti].waiters.length : 0;
+      }
+      var bayCount = Math.min(8, totalWaiters);
+      if (bayCount > 0) {
+        ctx.save();
+        for (var bi = 0; bi < bayCount; bi++) {
+          var ang = (bi / 8) * Math.PI * 2 + (calm ? 0 : time * 1.2);
+          var wx = lck.x + lck.w / 2 + Math.cos(ang) * (lck.w * 0.58);
+          var wy = lck.y + lck.d / 2 + Math.sin(ang) * (lck.d * 0.58);
+          var bp = proj(cam, wx, wy, 0.25);
+          ctx.fillStyle = "#ff8787";
+          ctx.beginPath();
+          ctx.arc(bp[0], bp[1], 3.0 * cam.zoom, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+      if (s.deadlockFlash > 0) {
+        var lp = proj(cam, lck.x + lck.w / 2, lck.y + lck.d / 2, lck.h * 0.6);
+        ctx.save();
+        ctx.strokeStyle = "rgba(255,61,107," + Math.min(1, s.deadlockFlash) + ")";
+        ctx.lineWidth = 2.2 * cam.zoom;
+        ctx.beginPath();
+        ctx.arc(lp[0], lp[1], (12 + (1 - s.deadlockFlash) * 14) * cam.zoom, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
   function draw(ctx, cam, s, cw, ch, hoverId, selectedId, time) {
     lastSim = s;
     drawGround(ctx, cam, cw, ch, s);
@@ -825,6 +960,7 @@ var Render = (function () {
         drawParticle(ctx, cam, d.q, time);
       }
     }
+    drawSubsystems(ctx, cam, s, time);
     drawLabels(ctx, cam, s, hoverId, selectedId, time);
   }
 

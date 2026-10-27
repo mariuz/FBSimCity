@@ -116,8 +116,11 @@ var Sim = (function () {
       challenge: null,   // {id, at, snap} while a situation is live
       verdict: null,     // {id, choice, lines[], measuredFor} once answered
 
-      // disk activity marker for the renderer
+      // disk activity & subsystem micro-visualisation markers for the renderer
       diskFlash: 0, diskPos: 0.5,
+      btrFlash: 0, btrLeaf: 0, btrSplitFlash: 0,
+      sortFlash: 0, sortSpillFlash: 0, sortRuns: 0,
+      deadlockFlash: 0,
 
       // entities
       particles: [],
@@ -804,13 +807,20 @@ var Sim = (function () {
         if (q.traced) s.traceNote = wHit ? "hit" : "miss";
         break;
       }
+      case "btr":
+        s.btrFlash = 1;
+        s.btrLeaf = (q.table !== undefined ? q.table : 0) % 4;
+        break;
       case "sort": {
         // Firebird sorts in memory up to TempCacheLimit and spills the rest
         // to temporary files. A spill is disk I/O the query pays for.
         s.sorts++;
+        s.sortFlash = 1;
+        s.sortRuns = Math.min(8, s.sortRuns + 2);
         var need = 8 + Math.floor(Math.random() * 90);
         if (need > s.tempCacheLimit) {
           s.sortSpills++;
+          s.sortSpillFlash = 1;
           q.dwell += 0.35 + (need - s.tempCacheLimit) / 120;
           s.diskFlash = 1;
           s.diskPos = Math.random();
@@ -855,6 +865,7 @@ var Sim = (function () {
         // WAIT mode: check if waiting on holderQ creates a wait-for cycle
         if (detectDeadlockCycle(s, q, holderQ)) {
           s.deadlocks++;
+          s.deadlockFlash = 1;
           say(s, "Deadlock scan: cycle txn " + q.txn + " ↔ txn " + holderQ.txn +
             " — txn " + q.txn + " rolled back.");
           finishTxn(s, q, true);
@@ -911,6 +922,11 @@ var Sim = (function () {
         // Firebird does not recompute RDB$STATISTICS automatically on every
         // write; heavy modifications drift cached selectivity until SET STATISTICS.
         t.statDrift = Math.min(0.85, +(t.statDrift + 0.015).toFixed(4));
+        if (Math.random() < 0.28) {
+          s.btrFlash = Math.max(s.btrFlash, 0.75);
+          s.btrSplitFlash = 1;
+          s.btrLeaf = (q.table !== undefined ? q.table : 0) % 4;
+        }
         t.flash = 1;
         break;
       }
@@ -1909,6 +1925,12 @@ var Sim = (function () {
       if (s.tables[i].purgeFlash > 0) s.tables[i].purgeFlash -= dt * 2.2;
     }
     if (s.diskFlash > 0) s.diskFlash -= dt * 2.5;
+    if (s.btrFlash > 0) s.btrFlash -= dt * 2.0;
+    if (s.btrSplitFlash > 0) s.btrSplitFlash -= dt * 2.2;
+    if (s.sortFlash > 0) s.sortFlash -= dt * 1.8;
+    if (s.sortSpillFlash > 0) s.sortSpillFlash -= dt * 1.6;
+    if (s.sortRuns > 0) s.sortRuns = Math.max(0, s.sortRuns - dt * 2.4);
+    if (s.deadlockFlash > 0) s.deadlockFlash -= dt * 1.6;
 
     // 1-second stats window
     s.statTimer += dt;

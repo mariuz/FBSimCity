@@ -1118,6 +1118,16 @@
       Render.slabColor(1022, false, slabMock), "#fcc419");
     t.eq("dead back-version slab below OIT is coloured crimson",
       Render.slabColor(1005, false, slabMock), "#ff3d6b");
+
+    // Subsystem micro-visualisation state markers (btr, sort, lock):
+    var microSim = Sim.create();
+    microSim.queryRate = 14; microSim.updateRatio = 0.5;
+    microSim.tempCacheLimit = 8;
+    run(microSim, 30);
+    t.ok("B-Tree leaf index stays within 0..3",
+      microSim.btrLeaf >= 0 && microSim.btrLeaf < 4);
+    t.ok("Sort Yard run counter stays bounded",
+      microSim.sortRuns >= 0 && microSim.sortRuns <= 8);
   }
 
   // ---- 8c. the readouts agree with the model ---------------------------

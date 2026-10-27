@@ -200,7 +200,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   a table, the dead bottom slabs visibly crumble/dissolve while live slabs
   settle down.
 
-### 14. On-canvas subsystem micro-visualisations (`btr`, `sort`, `lock`, `cache`)
+### 14. [x] On-canvas subsystem micro-visualisations (`btr`, `sort`, `lock`, `cache`) — *Completed*
 - **Today in `render.js`:** Several key districts (`B-Tree Gardens`, `Sort Yard`,
   `Lock Manager Tower`) are rendered as static decorative roofs whose visual
   state barely changes under load.
