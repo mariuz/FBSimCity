@@ -260,6 +260,7 @@ var UI = (function () {
     $("info-close").addEventListener("click", function () {
       els.info.classList.add("hidden");
       infoSelectedId = null;
+      syncInspectorTabs();
     });
     $("btn-about").addEventListener("click", function () { showAbout(); });
 
@@ -282,19 +283,60 @@ var UI = (function () {
     try { saved = localStorage.getItem("fbsimcity-theme"); } catch (e) { }
     applyTheme(saved === "day" ? "day" : "dark");
 
-    // overlays
+    // overlays & inspector rail
     $("btn-decide").addEventListener("click", function () { openDecisions(); });
     $("btn-latency").addEventListener("click", function () {
+      expandInspectorRail();
       $("latency-dock").classList.toggle("hidden");
       renderLatency();
+      syncInspectorTabs();
     });
     $("latency-close").addEventListener("click", function () {
       $("latency-dock").classList.add("hidden");
+      syncInspectorTabs();
     });
     $("decide-close").addEventListener("click", function () {
       Sim.endChallenge(simRef);
       $("decide-dock").classList.add("hidden");
+      syncInspectorTabs();
     });
+
+    var inspRail = $("inspector-rail");
+    var inspToggle = $("inspector-toggle");
+    if (inspToggle && inspRail) {
+      inspToggle.addEventListener("click", function () {
+        var c = !inspRail.classList.contains("collapsed");
+        inspRail.classList.toggle("collapsed", c);
+        inspToggle.textContent = c ? "+" : "−";
+      });
+    }
+    var inspTabs = $("inspector-tabs");
+    if (inspTabs) {
+      inspTabs.querySelectorAll("[data-tab]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          expandInspectorRail();
+          var tab = btn.getAttribute("data-tab");
+          if (tab === "info") {
+            if (els.info.classList.contains("hidden")) {
+              if (infoSelectedId) showBuilding(infoSelectedId);
+              else showAbout();
+            } else {
+              els.info.classList.add("hidden");
+            }
+          } else if (tab === "decisions") {
+            if ($("decide-dock").classList.contains("hidden")) openDecisions();
+            else $("decide-dock").classList.add("hidden");
+          } else if (tab === "latency") {
+            $("latency-dock").classList.toggle("hidden");
+            renderLatency();
+          } else if (tab === "trace") {
+            if (els.trace.classList.contains("hidden")) startTraceUI();
+            else endTraceUI();
+          }
+          syncInspectorTabs();
+        });
+      });
+    }
 
     $("btn-help").addEventListener("click", function () { toggleOverlay("help-overlay"); });
     $("help-close").addEventListener("click", function () { toggleOverlay("help-overlay", false); });
@@ -369,6 +411,7 @@ var UI = (function () {
       } else if (dk === "decisions") {
         openDecisions();
       }
+      syncInspectorTabs();
     } catch (e) { }
   }
 
@@ -417,19 +460,47 @@ var UI = (function () {
     el.classList.toggle("hidden", !show);
   }
 
+  function expandInspectorRail() {
+    var rail = $("inspector-rail");
+    var tog = $("inspector-toggle");
+    if (rail && rail.classList.contains("collapsed")) {
+      rail.classList.remove("collapsed");
+      if (tog) tog.textContent = "−";
+    }
+  }
+
+  function syncInspectorTabs() {
+    var tabs = $("inspector-tabs");
+    if (!tabs) return;
+    var map = {
+      info: els.info && !els.info.classList.contains("hidden"),
+      decisions: $("decide-dock") && !$("decide-dock").classList.contains("hidden"),
+      latency: $("latency-dock") && !$("latency-dock").classList.contains("hidden"),
+      trace: els.trace && !els.trace.classList.contains("hidden")
+    };
+    tabs.querySelectorAll("[data-tab]").forEach(function (btn) {
+      var k = btn.getAttribute("data-tab");
+      btn.classList.toggle("active", !!map[k]);
+    });
+  }
+
   // ---- trace -----------------------------------------------------------
 
   function startTraceUI() {
-    if (simRef.tracedQ) return;
-    Sim.startTrace(simRef);
-    $("trace-auto").textContent = "Auto play";
+    expandInspectorRail();
+    if (!simRef.tracedQ) {
+      Sim.startTrace(simRef);
+      $("trace-auto").textContent = "Auto play";
+    }
     els.trace.classList.remove("hidden");
     updateTrace();
+    syncInspectorTabs();
   }
 
   function endTraceUI() {
     Sim.endTrace(simRef);
     els.trace.classList.add("hidden");
+    syncInspectorTabs();
   }
 
   var lastStageShown = null, lastNoteShown = null;
@@ -460,14 +531,13 @@ var UI = (function () {
   // point is that the situation is getting worse while you decide.
 
   function openDecisions() {
-    // the dock and the info panel share the right-hand corner, so they take
-    // turns; the decision itself is kept in the model, not in the DOM, so
-    // reopening returns to wherever you were
-    els.info.classList.add("hidden");
-    infoSelectedId = null;
+    // Inside #inspector-rail, #decide-dock and #info-panel stack vertically
+    // so you can read a building's src/jrd/ notes while evaluating a decision.
+    expandInspectorRail();
     var dock = $("decide-dock");
     dock.classList.remove("hidden");
     renderDecisions();
+    syncInspectorTabs();
   }
 
   function renderDecisions() {
@@ -622,7 +692,7 @@ var UI = (function () {
   function showBuilding(id, towerIdx) {
     var b = FB.byId[id];
     if (!b) return;
-    $("decide-dock").classList.add("hidden");
+    expandInspectorRail();
     infoSelectedId = id;
     if (id === "mvcc") {
       selectedTowerIdx = (towerIdx !== undefined && towerIdx !== null && towerIdx >= 0)
@@ -644,6 +714,7 @@ var UI = (function () {
     if (id === "cmp" || id === "btr") renderOptimizer(simRef);
     wireActions();
     els.info.classList.remove("hidden");
+    syncInspectorTabs();
   }
 
   // Walk up to a building and operate it: the controls that belong to a
@@ -955,7 +1026,7 @@ var UI = (function () {
   }
 
   function showAbout() {
-    $("decide-dock").classList.add("hidden");
+    expandInspectorRail();
     infoSelectedId = null;
     els.infoTitle.textContent = "FBSimCity";
     els.infoCode.textContent = "";
@@ -991,6 +1062,7 @@ var UI = (function () {
       "affiliated with or endorsed by the Firebird Project. Firebird&reg; is " +
       "a registered trademark of the Firebird Foundation Incorporated.</p>";
     els.info.classList.remove("hidden");
+    syncInspectorTabs();
   }
 
   // ---- tour ------------------------------------------------------------

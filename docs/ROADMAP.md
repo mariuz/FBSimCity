@@ -239,7 +239,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
 
 ## Part 4 — Interface & UX (`js/ui.js`, `css/style.css`)
 
-### 16. Unified right-hand inspector drawer & collision-free dock layout
+### 16. [x] Unified right-hand inspector drawer & collision-free dock layout *(Completed)*
 - **Today in `ui.js` & `style.css`:**
   - `#info-panel` and `#decide-dock` both anchor at `top: 60px; right: 12px` and
     forcibly close each other when opened, so you cannot read a building's

@@ -168,11 +168,50 @@
   <div id="event-log" aria-live="polite"></div>
 </aside>
 
-<aside id="info-panel" class="hidden">
-  <button id="info-close" aria-label="Close">×</button>
-  <h2 id="info-title"></h2>
-  <span id="info-code" class="code-chip"></span>
-  <div id="info-body"></div>
+<aside id="inspector-rail" aria-label="Inspector rail">
+  <div id="inspector-tabs" role="tablist" aria-label="Inspector views">
+    <button type="button" class="insp-tab active" data-tab="info" title="District and subsystem reference">Info</button>
+    <button type="button" class="insp-tab" data-tab="decisions" title="Operator decisions">Decisions</button>
+    <button type="button" class="insp-tab" data-tab="latency" title="Where the time goes">Latency</button>
+    <button type="button" class="insp-tab" data-tab="trace" title="Step-by-step query trace">Trace</button>
+    <button type="button" id="inspector-toggle" title="Collapse / expand inspector rail" aria-label="Collapse or expand inspector rail">−</button>
+  </div>
+
+  <div id="info-panel" class="hidden">
+    <button id="info-close" aria-label="Close">×</button>
+    <h2 id="info-title"></h2>
+    <span id="info-code" class="code-chip"></span>
+    <div id="info-body"></div>
+  </div>
+
+  <div id="decide-dock" class="hidden">
+    <div class="tour-head">
+      <h3 id="decide-title">Operator decisions</h3>
+      <button id="decide-close" aria-label="Close">×</button>
+    </div>
+    <div id="decide-body"></div>
+  </div>
+
+  <div id="latency-dock" class="hidden">
+    <div class="tour-head">
+      <h3>Where the time goes</h3>
+      <button id="latency-close" aria-label="Close">×</button>
+    </div>
+    <div id="latency-body"></div>
+  </div>
+
+  <div id="trace-panel" class="hidden">
+    <div class="tour-head">
+      <h3>Query trace</h3>
+      <button id="trace-end" aria-label="End trace">×</button>
+    </div>
+    <h4 id="trace-stage"></h4>
+    <p id="trace-text"></p>
+    <div class="tour-nav">
+      <button id="trace-auto">Auto play</button>
+      <button id="trace-step" class="primary">Next step →</button>
+    </div>
+  </div>
 </aside>
 
 <footer id="stats" aria-live="off">
@@ -193,22 +232,6 @@
   <span class="stat version">v0.10.0</span>
 </footer>
 
-<div id="decide-dock" class="hidden">
-  <div class="tour-head">
-    <h3 id="decide-title">Operator decisions</h3>
-    <button id="decide-close" aria-label="Close">×</button>
-  </div>
-  <div id="decide-body"></div>
-</div>
-
-<div id="latency-dock" class="hidden">
-  <div class="tour-head">
-    <h3>Where the time goes</h3>
-    <button id="latency-close" aria-label="Close">×</button>
-  </div>
-  <div id="latency-body"></div>
-</div>
-
 <div id="whereami" class="hidden" aria-live="polite"></div>
 <div id="a11y-live" class="visually-hidden" role="status" aria-live="polite"></div>
 
@@ -226,19 +249,6 @@
   <div class="tour-nav">
     <button id="tour-prev">← Back</button>
     <button id="tour-next" class="primary">Next →</button>
-  </div>
-</div>
-
-<div id="trace-panel" class="hidden">
-  <div class="tour-head">
-    <h3>Query trace</h3>
-    <button id="trace-end" aria-label="End trace">×</button>
-  </div>
-  <h4 id="trace-stage"></h4>
-  <p id="trace-text"></p>
-  <div class="tour-nav">
-    <button id="trace-auto">Auto play</button>
-    <button id="trace-step" class="primary">Next step →</button>
   </div>
 </div>
 

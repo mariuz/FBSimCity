@@ -1221,6 +1221,17 @@
       txt("st-lag"),
       s2.repl.disabled ? "STOPPED"
         : s2.repl.mode === "off" ? "off" : String(Sim.replLag(s2)));
+
+    // Unified right-hand inspector drawer & collision-free dock layout:
+    var rail = document.getElementById("inspector-rail");
+    var tabs = document.getElementById("inspector-tabs");
+    t.ok("unified right-hand #inspector-rail and #inspector-tabs exist",
+      !!rail && !!tabs && tabs.querySelectorAll("[data-tab]").length === 4);
+    document.getElementById("btn-decide").click();
+    UI.showBuilding("mvcc");
+    t.ok("District Info (#info-panel) and Operator Decisions (#decide-dock) stack without closing each other",
+      !document.getElementById("info-panel").classList.contains("hidden") &&
+      !document.getElementById("decide-dock").classList.contains("hidden"));
   }
 
   // ---- 8d. the throughput readout is not an estimate -------------------
