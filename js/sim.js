@@ -138,7 +138,7 @@ var Sim = (function () {
         ? +(0.005 + i * 0.008).toFixed(3)
         : +(0.18 + (i - 8) * 0.08).toFixed(3);
       s.tables.push({
-        versions: 1, flash: 0, chain: [960 + i], gcFlag: false,
+        versions: 1, flash: 0, purgeFlash: 0, chain: [960 + i], gcFlag: false,
         lockHolder: null, waiters: [],
         selectivity: baseSel, statDrift: 0,
         lastCommitCn: 960 + i
@@ -467,6 +467,7 @@ var Sim = (function () {
     s.totalVersions--;
     s.purges++;
     t.flash = 0.6;
+    t.purgeFlash = 1;
     if (t.versions <= 1 || t.chain[0] >= s.ost) t.gcFlag = false;
     markDirtyBuffer(s);
     if (q) q.dwell += 0.04;
@@ -490,6 +491,7 @@ var Sim = (function () {
           s.totalVersions--;
           s.purges++;
           t.flash = Math.max(t.flash, 0.45);
+          t.purgeFlash = 1;
           if (t.versions <= 1 || t.chain[0] >= s.ost) t.gcFlag = false;
           markDirtyBuffer(s);
           cleaned = true;
@@ -1096,6 +1098,7 @@ var Sim = (function () {
           t.chain = kept;
           t.versions = kept.length;
           t.flash = 1;
+          t.purgeFlash = 1;
         }
       }
     }
@@ -1903,6 +1906,7 @@ var Sim = (function () {
     }
     for (i = 0; i < s.tables.length; i++) {
       if (s.tables[i].flash > 0) s.tables[i].flash -= dt * 1.8;
+      if (s.tables[i].purgeFlash > 0) s.tables[i].purgeFlash -= dt * 2.2;
     }
     if (s.diskFlash > 0) s.diskFlash -= dt * 2.5;
 

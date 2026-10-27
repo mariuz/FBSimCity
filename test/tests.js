@@ -1107,6 +1107,17 @@
     // but well outside the isometric diamond
     t.ok("polygon hit-test rejects empty AABB corners outside the isometric quad",
       !Render.hitBox(pickCam, lexLeft[0], lexTop[1] - 4, lex.x, lex.y, lex.w, lex.d, lex.h));
+
+    // Discrete version-slab colour encoding on Record Version Towers:
+    // Head version is cyan-blue (#4dabf7), active snapshot back-version is
+    // amber (#fcc419), and dead version below OIT is crimson (#ff3d6b)
+    var slabMock = { oit: 1010, ost: 1020 };
+    t.eq("head version slab is coloured cyan-blue",
+      Render.slabColor(1025, true, slabMock), "#4dabf7");
+    t.eq("snapshot-visible back-version slab is coloured amber",
+      Render.slabColor(1022, false, slabMock), "#fcc419");
+    t.eq("dead back-version slab below OIT is coloured crimson",
+      Render.slabColor(1005, false, slabMock), "#ff3d6b");
   }
 
   // ---- 8c. the readouts agree with the model ---------------------------

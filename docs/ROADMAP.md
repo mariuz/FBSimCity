@@ -189,7 +189,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
     table's current version count, oldest `minTx`, and how many versions are
     eligible for GC (`tx < OIT`).
 
-### 13. Discrete version-slab rendering on `Record Version Towers`
+### 13. [x] Discrete version-slab rendering on `Record Version Towers` — *Completed*
 - **Today in `render.js`:** Each tower in `Record Version Towers` is drawn as a
   single solid-coloured box of height `0.5 + t.versions * 0.28` that shifts
   uniformly from blue to amber to red as `t.versions` grows.

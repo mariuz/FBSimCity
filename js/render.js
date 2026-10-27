@@ -490,6 +490,66 @@ var Render = (function () {
                  hex2(247 - t * 140);
   }
 
+  /* Colour an individual record-version slab by its visibility status:
+   * - current head version: cyan-blue (#4dabf7)
+   * - active snapshot back-version (txn >= OST): amber (#fcc419)
+   * - unreachable back-version below OST / OIT: crimson (#ff3d6b) */
+  function slabColor(txn, isHead, s) {
+    if (isHead) return "#4dabf7";
+    if (s && txn < s.oit) return "#ff3d6b";
+    if (s && txn < s.ost) return "#ff6b6b";
+    return "#fcc419";
+  }
+
+  function drawSlab(ctx, cam, x, y, w, d, z0, z1, color, glow) {
+    var a0 = proj(cam, x, y, z0), b0 = proj(cam, x + w, y, z0),
+        c0 = proj(cam, x + w, y + d, z0), d0 = proj(cam, x, y + d, z0),
+        a1 = proj(cam, x, y, z1), b1 = proj(cam, x + w, y, z1),
+        c1 = proj(cam, x + w, y + d, z1), d1 = proj(cam, x, y + d, z1);
+    poly(ctx, [b1, c1, c0, b0], shade(color, 0.55));
+    poly(ctx, [d1, c1, c0, d0], shade(color, 0.78));
+    poly(ctx, [a1, b1, c1, d1], shade(color, 1.18), "rgba(0,0,0,0.42)", 0.9);
+    if (glow > 0) {
+      ctx.save();
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 16 * glow * cam.zoom;
+      ctx.globalAlpha = Math.min(1, 0.35 + glow * 0.65);
+      poly(ctx, [a1, b1, c1, d1], null, color, 1.5);
+      ctx.restore();
+    }
+  }
+
+  function drawVersionTower(ctx, cam, d, s) {
+    var t = d.table;
+    if (!t || !t.chain || !t.chain.length) {
+      drawBox(ctx, cam, d.x, d.y, d.w, d.d, d.h, d.color, d.glow);
+      return;
+    }
+    // foundation plinth
+    drawSlab(ctx, cam, d.x, d.y, d.w, d.d, 0, 0.46, "#2b3856", 0);
+    // GC / sweep crumble pulse at the bottom when dead versions are purged
+    if (t.purgeFlash > 0) {
+      var pf = Math.max(0, Math.min(1, t.purgeFlash));
+      var expand = (1 - pf) * 0.25;
+      ctx.save();
+      ctx.globalAlpha = pf * 0.75;
+      diamond(ctx, cam, d.x + d.w / 2, d.y + d.d / 2, 0.75 + expand,
+        null, "#ff6b6b");
+      ctx.restore();
+    }
+    var chain = t.chain;
+    var shown = Math.min(chain.length, 26);
+    var startIdx = chain.length - shown;
+    for (var k = 0; k < shown; k++) {
+      var idx = startIdx + k;
+      var isHead = idx === chain.length - 1;
+      var z0 = 0.5 + k * 0.28;
+      var z1 = z0 + 0.24;
+      var col = slabColor(chain[idx], isHead, s);
+      drawSlab(ctx, cam, d.x, d.y, d.w, d.d, z0, z1, col, isHead ? d.glow : 0);
+    }
+  }
+
   // ---------------------------------------------------------------------
 
   function collectDrawables(s, hoverId, selectedId, time) {
@@ -537,7 +597,7 @@ var Render = (function () {
           key: tx + 1.3 + ty + 1.3, type: "box",
           x: tx, y: ty, w: 1.3, d: 1.3, h: h,
           color: towerColor(t.versions),
-          glow: tGlow, b: m, mvcc: true, towerIdx: i
+          glow: tGlow, b: m, mvcc: true, towerIdx: i, table: t
         });
       }
     }
@@ -756,7 +816,11 @@ var Render = (function () {
     for (var i = 0; i < list.length; i++) {
       var d = list[i];
       if (d.type === "box") {
-        drawBox(ctx, cam, d.x, d.y, d.w, d.d, d.h, d.color, d.glow);
+        if (d.mvcc && d.table) {
+          drawVersionTower(ctx, cam, d, s);
+        } else {
+          drawBox(ctx, cam, d.x, d.y, d.w, d.d, d.h, d.color, d.glow);
+        }
       } else {
         drawParticle(ctx, cam, d.q, time);
       }
@@ -767,6 +831,7 @@ var Render = (function () {
   return {
     draw: draw, pick: pick, pickTower: pickTower,
     pointInPoly: pointInPoly, hitBox: hitBox,
+    slabColor: slabColor,
     getHoveredTower: function () { return hoveredTower; },
     setSelectedTower: function (idx) { selectedTower = idx; },
     proj: proj,
