@@ -1801,7 +1801,15 @@ var Sim = (function () {
     var isUpdate = /^\s*(insert|update|delete|merge)\b/i.test(sqlStr);
     var hasIndex = /\bindex\b/i.test(planStr);
     var hasSort = /\bsort\b/i.test(planStr);
+    // Match both Firebird 5 ("TABLE") and Firebird 6 schema-qualified ("PUBLIC"."TABLE") plans
+    var tblMatch = planStr.match(/Table\s+(?:"[^"]+"\.)?"([^"]+)"/i) ||
+                   sqlStr.match(/\b(?:from|into|update)\s+(?:"?[a-z0-9_$]+"?\.)?"?([a-z0-9_$]+)"?/i);
     var tableIdx = pickTable(isUpdate);
+    if (tblMatch && tblMatch[1]) {
+      var h = 0, tName = tblMatch[1].toUpperCase();
+      for (var ci = 0; ci < tName.length; ci++) h = (h * 31 + tName.charCodeAt(ci)) % TABLE_COUNT;
+      tableIdx = h;
+    }
 
     var path = [
       wp("harbor", 0.05),
@@ -1893,8 +1901,12 @@ var Sim = (function () {
     s.lastTelemetry = {
       sql: tel.sql || "",
       planText: tel.planText || "",
-      info: tel.info || null
+      info: tel.info || null,
+      sweep: !!tel.sweep
     };
+    if (tel.sweep) {
+      startSweep(s, true);
+    }
     if (tel.sql || tel.planText) {
       return spawnExplainedQuery(s, tel.sql, tel.planText);
     }

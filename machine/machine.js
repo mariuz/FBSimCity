@@ -29,6 +29,7 @@ const els = {
   sql: document.getElementById('sql'),
   run: document.getElementById('run'),
   explain: document.getElementById('explain'),
+  sweep: document.getElementById('sweep'),
   reset: document.getElementById('reset'),
   timing: document.getElementById('timing'),
   result: document.getElementById('result'),
@@ -325,6 +326,7 @@ function setStatus(state, text) {
 function setButtonsDisabled(disabled) {
   els.run.disabled = disabled;
   if (els.explain) els.explain.disabled = disabled;
+  if (els.sweep) els.sweep.disabled = disabled;
 }
 
 function looksLikeQuery(sql) {
@@ -541,6 +543,31 @@ async function runSequence(seq) {
   busy = false;
 }
 
+async function runSweep() {
+  if (busy || !db) return;
+  busy = true;
+  setButtonsDisabled(true);
+  setStatus('busy', 'Sweeping…');
+  els.result.replaceChildren();
+  const started = performance.now();
+  try {
+    if (typeof db.sweep !== 'function') {
+      throw new Error('This engine build does not expose db.sweep().');
+    }
+    await db.sweep();
+    broadcastTelemetry({ sweep: true });
+    renderStep('-- db.sweep() (isc_dpb_sweep)', { rows: [] }, null);
+    els.timing.textContent = `${Math.round(performance.now() - started)} ms`;
+  } catch (e) {
+    renderStep('-- db.sweep()', null, String((e && e.message) || e));
+    els.timing.textContent = `failed after ${Math.round(performance.now() - started)} ms`;
+  }
+  await refreshMarkers();
+  setStatus('ready', 'Ready');
+  setButtonsDisabled(false);
+  busy = false;
+}
+
 // ---- boot ----------------------------------------------------------------
 
 function buildSequenceList() {
@@ -608,6 +635,7 @@ async function boot() {
 
 els.run.addEventListener('click', runWorkbench);
 if (els.explain) els.explain.addEventListener('click', runExplain);
+if (els.sweep) els.sweep.addEventListener('click', runSweep);
 els.sql.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runWorkbench(); }
 });

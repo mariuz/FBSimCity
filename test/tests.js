@@ -286,6 +286,13 @@
       qUpd.path.some(function (w) { return w.at === "tra"; }));
     t.eq("telemetry bridge counts ingested telemetry packets",
       telSim.telemetryEvents, 3);
+    var qFb6 = Sim.ingestTelemetry(telSim, {
+      sql: 'SELECT ID FROM "PUBLIC"."MGA_DEMO" WHERE ID = 1',
+      planText: 'Select Expression\n  -> Table "PUBLIC"."MGA_DEMO" Access By ID\n    -> Index "PUBLIC"."RDB$PRIMARY1" Unique Scan',
+      sweep: true
+    });
+    t.ok("telemetry bridge parses Firebird 6 schema-qualified plans and triggers sweep",
+      qFb6 && qFb6.plan === "INDEX" && telSim.sweepActive);
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------
@@ -1352,6 +1359,8 @@
       /db\.databaseInfo\(\)/.test(js));
     t.ok("the machine room exposes db.explain() in the workbench and sequences",
       /id="explain"/.test(html) && /db\.explain\(/.test(js));
+    t.ok("the machine room exposes db.sweep() in the workbench",
+      /id="sweep"/.test(html) && /db\.sweep\(\)/.test(js));
     t.ok("the machine room deletes the firebird_-prefixed IndexedDB database",
       /firebird_\$\{DB_NAME\}/.test(js));
     t.ok("every sequence computes its verdict from the results",

@@ -127,8 +127,9 @@
   threaded build needed <code>SharedArrayBuffer</code> and
   <code>COOP</code>/<code>COEP</code> headers that GitHub Pages does not send.
   v0.9.0 solved that with a service worker that synthesised the headers at the
-  price of a reload on the first visit. Electric Firebird (`firebird-wasm`
-  0.12.0) now compiles a single-threaded build (<code>firebird-embedded-st</code>)
+  price of a reload on the first visit. Electric Firebird (<code>firebird-wasm</code>
+  0.13.0, with Firebird 5.0 LTS &amp; 6.0 WASM builds) now compiles a
+  single-threaded build (<code>firebird-embedded-st</code>)
   alongside the threaded one: on GitHub Pages the worker loads the
   single-threaded engine directly, needing no <code>SharedArrayBuffer</code>,
   no service worker, and no reload.</p>
@@ -196,7 +197,9 @@
 await db.exec('CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR(100))');
 const rows = await db.query('SELECT * FROM items WHERE id = ?', [1]);
 const plan = await db.explain('SELECT * FROM items WHERE id = ?', { detailed: true });
-const info = await db.databaseInfo();</code></pre>
+const info = await db.databaseInfo();
+const schema = await db.introspect();
+await db.sweep();</code></pre>
   <p class="fine">Source and docs:
   <a href="https://github.com/mariuz/electric-firebird">github.com/mariuz/electric-firebird</a>.
   FBSimCity does not bundle the engine: the machine room loads it from Electric

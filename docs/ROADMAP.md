@@ -296,3 +296,178 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   - On narrow viewports, collapse `#controls` and `#info-panel` into swipeable
     bottom sheets so the isometric canvas keeps full screen height.
 
+---
+
+## Part 5 — Engine Accuracy & `firebird-wasm` `0.13.0+` Integration (`js/sim.js`, `machine/`)
+
+### 21. Live `db.sweep()`, `db.introspect()`, and Firebird 6 schema-qualified plan bridge (`firebird-wasm` `0.13.0`)
+- **What `firebird-wasm` `0.13.0` adds:**
+  - `db.sweep()` (`isc_dpb_sweep` via `IAttachment`): invokes garbage-collection
+    sweep directly inside the WebAssembly engine and advances `OIT` to `OST`.
+  - `db.introspect()` & `migrate()`: queries `RDB$RELATIONS`,
+    `RDB$RELATION_FIELDS`, and `RDB$INDICES` to return structured catalog
+    metadata.
+  - Firebird 5.0 LTS & Firebird 6.0 WASM build matrix, where Firebird 6 plans
+    emit schema-qualified identifiers (`Table "PUBLIC"."MGA_DEMO"`) and
+    `db.databaseInfo()` normalizes `OAT`/`OST` to `OIT` before the first
+    transaction starts.
+- **Improvement:**
+  - Add a **Sweep** button (`#sweep` calling `db.sweep()`) and an **Introspect
+    catalog** sequence (`db.introspect()`) in `machine/`, broadcasting sweep and
+    catalog telemetry over `BroadcastChannel('fbsimcity-telemetry')` so the
+    city's sweep truck and `Metadata Library (RDB$)` react in real time.
+  - Parse Firebird 6 schema-qualified table names (`"PUBLIC"."TABLE"`) in
+    `Sim.spawnExplainedQuery()` and map them deterministically to the city's 12
+    tables (`T0..T11`).
+
+### 22. Cursor batch streaming (`PreparedStatement.queryStream()`) & segmented BLOB I/O (`IBlob`)
+- **Today in `sim.js`:** Every `SELECT` returns a single monolithic result
+  particle from `Execution Hall` → `Y-Valve Gate` → `Client Harbor`, and BLOB
+  pages are not distinguished from regular data pages.
+- **Improvement:**
+  - Model `PreparedStatement.queryStream({ fetchSize })` (`firebird-wasm`
+    `0.13.0`): long-running cursor queries hold their snapshot (`OST`) open
+    while emitting a train of smaller batch-fetch sub-particles between `EXE`,
+    `Y-VALVE`, and `REMOTE`.
+  - Model segmented BLOB reads/writes (`openBlobStream` / `createBlobStream` in
+    `src/jrd/blb.cpp`): large payloads allocate dedicated BLOB pages on the
+    `Database File (PIO)` and stream segments without evicting hot relational
+    index pages.
+
+### 23. Durable write-queue (`FB_WRITE_QUEUE$`) & optimistic pre-image rollback modeling
+- **What `firebird-wasm` `0.13.0` adds:** `createWriteQueue()` persists pending
+  offline mutations in `FB_WRITE_QUEUE$` and rolls back local optimistic
+  state using captured pre-images when a server conflict occurs.
+- **Improvement:** Add an optional **Local-first write queue** mode at `Client
+  Harbor` showing mutations staged in `FB_WRITE_QUEUE$`, flushed in ordered
+  batches through `Y-Valve Gate`, and rolled back cleanly via pre-image
+  restoration when a conflict or `NO WAIT` abort occurs.
+
+### 24. Firebird 5.0 parallel sweep / index workers & Firebird 6.0 SQL schemas (`PUBLIC`)
+- **Today in `sim.js`:** Sweep is always a single truck touring `T0..T11`
+  sequentially over 4 seconds, and `Metadata Library` treats all tables as a
+  flat namespace.
+- **Improvement:**
+  - Model Firebird 5.0's `ParallelWorkers` (`firebird.conf`): allow `1–4`
+    parallel sweep / index-build workers that divide the 12 `Record Version
+    Towers` concurrently, cutting sweep duration at the cost of higher `Page
+    Cache Plaza` & `Database File` I/O pressure.
+  - Display Firebird 6.0 `SCHEMA` namespaces (`PUBLIC`, `APP`, `AUDIT`) in the
+    `Metadata Library (RDB$)` and `Compiler & Optimizer (CMP)` inspector panels.
+
+---
+
+## Part 6 — Next-Gen 3D Rendering: Three.js & WebGPU (`js/render-webgpu.js`, `js/render.js`)
+
+### 25. Pluggable Three.js `WebGPURenderer` backend with seamless WebGL2 / Canvas2D fallback
+- **Today in `render.js`:** The entire city is drawn in immediate-mode 2D
+  Canvas (`ctx.beginPath` / `ctx.fill` per prism face), which limits lighting,
+  shadows, and high-entity counts.
+- **Improvement:**
+  - Introduce a clean renderer adapter (`Render.setBackend("webgpu" | "canvas2d")`)
+    backed by **Three.js `WebGPURenderer`** (automatically falling back to
+    `WebGLRenderer` or the zero-dependency `Canvas2D` renderer when WebGPU is
+    unavailable or in headless tests).
+  - Match the orthographic isometric projection (`Render.TW = 20`,
+    `Render.TH = 10`, `Render.TZ = 14`) 1:1 so `Camera`, `Render.pick`, and
+    `Render.pickTower` coordinates stay identical across 2D and 3D modes.
+
+### 26. GPU-instanced version slabs, cache buffers, and particles (`THREE.InstancedMesh` + WebGPU storage buffers)
+- **Today in `render.js`:** Every cache slot (`128`), version slab (`12 × 26`),
+  and particle (`300`) issues separate CPU path calls every frame.
+- **Improvement:**
+  - Batch all `Record Version Tower` slabs, `Page Cache Plaza` slots, `Database
+    File` page cells, and query particles into `THREE.InstancedMesh` (and
+    WebGPU storage/instance buffers updated via typed arrays), supporting
+    `5,000+` concurrent particles at `120 fps` with zero per-frame garbage
+    allocation.
+
+### 27. TSL (Three.js Shading Language) procedural shaders, soft shadows & emissive bloom
+- **Improvement:**
+  - Use Three.js Node Material / TSL shaders for:
+    - Animated data-bus road lanes and `StatementCacheSize` expressway pulses,
+    - Emissive selective bloom on `SQL` (cyan), `BLR` (violet), `Result`
+      (emerald), and `Rollback` (crimson) particles (automatically toned down in
+      Daylight and `prefers-reduced-motion` modes),
+    - Real-time directional sun / moon shadow maps across the 12 `Record
+      Version Towers` so tower height (version bloat) casts physical shadows
+      across the JRD district.
+
+---
+
+## Part 7 — Code Review Findings & Architecture Hardening (`js/sim.js`, `js/ui.js`, `js/render.js`)
+
+### 28. Deterministic PRNG seeding (`Sim.create({ seed })`), state serialization & zero-allocation hot loops
+- **Code review findings in `sim.js` & `render.js`:**
+  1. `sim.js` calls `Math.random()` directly in 16 places (`pickPage`,
+     `pickTable`, `spawnQuery`, `arrive`), making exact bug reproduction and
+     seeded replay impossible.
+  2. `moveParticles()` and `collectDrawables()` allocate fresh objects and
+     arrays (`s.particles.filter(...)`, `list.push(boundsOf({...}))`) on every
+     60 Hz frame.
+- **Improvement:**
+  - Replace direct `Math.random()` calls in `sim.js` with a fast seedable PRNG
+    (`mulberry32` stored on `s.rng`, defaulting to random seed when omitted) so
+    any simulation run or test failure can be replayed deterministically from a
+    seed in the share URL (`?seed=...`).
+  - Reuse pre-allocated drawable pools and in-place compaction in
+    `moveParticles()` to eliminate 60 Hz GC pauses.
+
+### 29. DOM construction safety (`replaceChildren` vs `innerHTML`), CSP hardening & Web Worker simulation option
+- **Code review findings in `ui.js` & `index.html`:**
+  1. `ui.js` rebuilds `#info-body`, `#decide-body`, `#latency-body`, and
+     `#event-log` via string concatenation and `innerHTML` inside `updateStats()`
+     (every frame/tick when open), whereas `machine/machine.js` already uses
+     safe `document.createElement` + `replaceChildren()`.
+  2. `updateStats()` re-renders `#event-log` `innerHTML` on every frame even
+     when `s.log` has not changed since the last frame.
+- **Improvement:**
+  - Guard `#event-log`, `#chain-live`, `#lock-live`, and `#opt-live` updates
+    behind dirty-version checks so DOM nodes are only touched when model state
+    changes.
+  - Replace dynamic `innerHTML` string assembly with structured DOM builders
+    and add a strict `<meta http-equiv="Content-Security-Policy">` header.
+
+---
+
+## Part 8 — Google Chrome UX, Core Web Vitals & Modern Web Platform Practices (`index.html`, `css/style.css`, `js/ui.js`)
+
+### 30. Native HTML `<dialog>` modals, Popover API, and keyboard focus management
+- **Today in `index.html` & `ui.js`:** `#help-overlay` and `#anatomy-overlay`
+  are `<div class="overlay hidden">` elements without native focus trapping,
+  `aria-modal`, or browser `CloseWatcher` integration.
+- **Improvement:**
+  - Upgrade `#help-overlay` and `#anatomy-overlay` to native `<dialog>` elements
+    using `.showModal()` / `.close()`, giving Chrome users automatic top-layer
+    rendering, background `inert` focus trapping, and hardware/gesture `Escape`
+    dismissal (`CloseWatcher`).
+  - Use the native HTML `popover="auto"` API for quick glossary/metric tooltips
+    on `#stats` counters.
+
+### 31. View Transitions API, `ResizeObserver` (`devicePixelContentBoxSize`), and INP `< 16 ms` optimization
+- **Today in `main.js` & `ui.js`:**
+  - `frame()` checks `canvas.clientWidth` on every `requestAnimationFrame`
+    tick (forcing synchronous layout reads in the render loop) instead of using
+    `ResizeObserver`.
+  - Switching tabs in `#inspector-rail` or scenarios snaps abruptly.
+- **Improvement:**
+  - Observe `#city` with `ResizeObserver` (reading `devicePixelContentBoxSize`
+    when supported by Chrome for pixel-exact HiDPI rendering) and remove layout
+    reads from `frame()`.
+  - Wrap inspector tab switches and building panel transitions in
+    `document.startViewTransition()` (with graceful fallback) and yield long
+    decision fast-forwards (`runFor`) or heavy UI updates to keep Chrome's
+    **Interaction to Next Paint (INP)** well under `16 ms`.
+
+### 32. Chrome DevTools Performance Extensibility API (`performance.measure` tracks) & installable Offline PWA
+- **Improvement:**
+  - Instrument `Sim.tick` and `Render.draw` with Chrome DevTools Performance
+    Extensibility markers (`performance.measure(..., { detail: { devtools: { dataType: 'track-entry', track: 'FBSimCity Engine' } } })`
+    when enabled via `?devtools=1`), surfacing custom **Simulation** and
+    **Isometric Render** flamechart tracks right inside Chrome DevTools
+    Performance recordings.
+  - Add `manifest.webmanifest`, `<meta name="color-scheme" content="dark light">`,
+    and an offline-capable Service Worker so `FBSimCity` passes Chrome
+    Lighthouse PWA / Best Practices / Accessibility audits at 100%.
+
+
