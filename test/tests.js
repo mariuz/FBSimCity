@@ -61,6 +61,7 @@
       { id: "ctl-cache", doc: "Page cache" },
       { id: "ctl-sweepint", doc: "Sweep interval" },
       { id: "ctl-sweepon", doc: "Automatic sweep" },
+      { id: "ctl-gcpolicy", doc: "GC policy" },
       { id: "ctl-longtxn", doc: "Long-running transaction" },
       { id: "ctl-scenario", doc: "Scenario" },
       { id: "ctl-replmode", doc: "Replication mode" },
@@ -118,6 +119,29 @@
       "tight " + tight.sortSpills + "/" + tight.sorts +
       " vs roomy " + roomy.sortSpills + "/" + roomy.sorts);
     t.eq("a generous sort memory spills nothing", roomy.sortSpills, 0);
+
+    // GC policy: cooperative charges inline purge dwell to readers, while
+    // background delegates purges to the background worker without stalling SELECTs
+    var gcCoop = Sim.create(), gcBg = Sim.create();
+    gcCoop.queryRate = 12; gcCoop.updateRatio = 0; gcCoop.sweepEnabled = false;
+    gcBg.queryRate = 12; gcBg.updateRatio = 0; gcBg.sweepEnabled = false;
+    Sim.setGcPolicy(gcCoop, "cooperative");
+    Sim.setGcPolicy(gcBg, "background");
+    for (var ti = 0; ti < Sim.TABLE_COUNT; ti++) {
+      gcCoop.tables[ti].chain = [950, 955, 960, 965, 970];
+      gcCoop.tables[ti].versions = 5;
+      gcBg.tables[ti].chain = [950, 955, 960, 965, 970];
+      gcBg.tables[ti].versions = 5;
+    }
+    gcCoop.totalVersions = 4 * Sim.TABLE_COUNT;
+    gcBg.totalVersions = 4 * Sim.TABLE_COUNT;
+    run(gcCoop, 25); run(gcBg, 25);
+    t.ok("cooperative GC purges dead versions inline", gcCoop.purges > 0);
+    t.ok("background GC purges flagged versions asynchronously", gcBg.purges > 0);
+    t.ok("cooperative GC charges inline purge latency to readers",
+      Sim.latencyProfile(gcCoop).mean.version > Sim.latencyProfile(gcBg).mean.version,
+      "coop " + Sim.latencyProfile(gcCoop).mean.version.toFixed(3) +
+      "s vs bg " + Sim.latencyProfile(gcBg).mean.version.toFixed(3) + "s");
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------
@@ -596,6 +620,7 @@
     var bad = [];
     var nums = {
       totalVersions: s.totalVersions, backversionReads: s.backversionReads,
+      purges: s.purges,
       next: s.next, oat: s.oat, ost: s.ost, oit: s.oit,
       hitRatio: s.hitRatio, evictions: s.evictions,
       dirtyEvictions: s.dirtyEvictions, pageWrites: s.pageWrites,
@@ -648,6 +673,7 @@
               // stir in the other controls too
               s.tempCacheLimit = (cases % 2) ? 8 : 120;
               s.sweepEnabled = (cases % 3) !== 0;
+              Sim.setGcPolicy(s, ["combined", "cooperative", "background"][cases % 3]);
               if (cases % 5 === 0) Sim.setLongTxn(s, true);
               if (cases % 7 === 0) Sim.toggleLock(s);
               if (cases % 11 === 0) Sim.startGbak(s);

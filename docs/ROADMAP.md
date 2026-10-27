@@ -49,7 +49,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   reader's snapshot or awaiting GC. Watching `SELECT` p95 climb in the Latency
   panel as towers redden makes the consequence of a stuck OIT quantitative.
 
-### 3. Cooperative vs background garbage collection (`GCPolicy`)
+### 3. [x] Cooperative vs background garbage collection (`GCPolicy`) — *Completed*
 - **Today in `sim.js`:** `coopGC()` removes one version from a random table on
   35% of cache hits if nothing pins the OIT, at zero I/O or latency cost to the
   reader.

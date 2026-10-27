@@ -35,6 +35,9 @@ var Sim = (function () {
       tables: [],
       totalVersions: 0,
       backversionReads: 0,   // MON$BACKVERSION_READS: delta steps walked by queries
+      purges: 0,             // MON$RECORD_PURGES: dead back-versions removed by GC
+      gcPolicy: "combined",  // combined | cooperative | background (firebird.conf GCPolicy)
+      bgGcAcc: 0,
 
       // page cache: slots of {page, lastUse, flash, state}
       cache: [],
@@ -109,7 +112,7 @@ var Sim = (function () {
       // chain[0] is the oldest version, chain[last] the current one;
       // each entry is the id of the transaction that wrote it (seeds sit
       // well below the initial markers, like rows loaded long ago)
-      s.tables.push({ versions: 1, flash: 0, chain: [960 + i] });
+      s.tables.push({ versions: 1, flash: 0, chain: [960 + i], gcFlag: false });
     }
     setCacheSize(s, s.cacheSize);
     say(s, "Database on line. Cache " + s.cacheSize + " pages, sweep interval " +
@@ -270,17 +273,77 @@ var Sim = (function () {
     s.oit = Math.min(rbFloor, s.ost);
   }
 
-  function coopGC(s, tableIdx) {
-    // a reader tidies the chain it walked through, if older than OST
-    if (holder(s) !== null) return;
+  /* Purging a dead record version modifies the data page in place, leaving
+   * a resident cache buffer dirty (MON$PAGE_MARKS). */
+  function markDirtyBuffer(s) {
+    for (var i = 0; i < s.cache.length; i++) {
+      var c = s.cache[i];
+      if (c.page >= 0 && !c.dirty) {
+        c.dirty = true;
+        c.state = 3;
+        c.flash = Math.max(c.flash, 0.55);
+        return;
+      }
+    }
+  }
+
+  function coopGC(s, tableIdx, q) {
+    // GCPolicy (src/jrd/vio.cpp):
+    // - "background": readers only flag the page in gc_record bitmaps; a
+    //   background GC thread cleans them asynchronously without stalling SELECTs.
+    // - "cooperative": the reader purges dead back-versions (< OST) inline,
+    //   paying the version-purge dwell and dirty-page mark itself.
+    // - "combined": flags for background GC, and purges inline when chains grow.
+    if (holder(s) !== null) return false;
     var idx = (tableIdx !== undefined && tableIdx !== null)
       ? tableIdx : Math.floor(Math.random() * TABLE_COUNT);
     var t = s.tables[idx];
-    if (t.versions > 1 && t.chain[0] < s.ost) {
-      t.chain.shift();
-      t.versions--;
-      s.totalVersions--;
-      t.flash = 0.6;
+    if (!(t.versions > 1 && t.chain[0] < s.ost)) return false;
+
+    if (s.gcPolicy === "background") {
+      t.gcFlag = true;
+      return false;
+    }
+    if (s.gcPolicy === "combined") {
+      t.gcFlag = true;
+      if (t.versions < 4 && Math.random() >= 0.35) return false;
+    }
+
+    t.chain.shift();
+    t.versions--;
+    s.totalVersions--;
+    s.purges++;
+    t.flash = 0.6;
+    if (t.versions <= 1 || t.chain[0] >= s.ost) t.gcFlag = false;
+    markDirtyBuffer(s);
+    if (q) q.dwell += 0.04;
+    return true;
+  }
+
+  function tickBackgroundGC(s, dt) {
+    if (s.gcPolicy === "cooperative" || holder(s) !== null) {
+      s.bgGcAcc = 0;
+      return;
+    }
+    s.bgGcAcc += dt * 10;
+    while (s.bgGcAcc >= 1) {
+      s.bgGcAcc -= 1;
+      var cleaned = false;
+      for (var i = 0; i < TABLE_COUNT; i++) {
+        var t = s.tables[i];
+        if (t.gcFlag && t.versions > 1 && t.chain[0] < s.ost) {
+          t.chain.shift();
+          t.versions--;
+          s.totalVersions--;
+          s.purges++;
+          t.flash = Math.max(t.flash, 0.45);
+          if (t.versions <= 1 || t.chain[0] >= s.ost) t.gcFlag = false;
+          markDirtyBuffer(s);
+          cleaned = true;
+          break;
+        }
+      }
+      if (!cleaned) { s.bgGcAcc = 0; break; }
     }
   }
 
@@ -414,7 +477,7 @@ var Sim = (function () {
       case "rversion": {
         var rt = s.tables[q.table !== undefined ? q.table : Math.floor(Math.random() * TABLE_COUNT)];
         chaseVersionChain(s, q, rt);
-        if (Math.random() < 0.45) coopGC(s, q.table);
+        if (Math.random() < 0.65) coopGC(s, q.table, q);
         break;
       }
       case "wpage": {
@@ -1135,6 +1198,13 @@ var Sim = (function () {
 
   // ---- public API ------------------------------------------------------
 
+  function setGcPolicy(s, policy) {
+    if (policy !== "cooperative" && policy !== "background" && policy !== "combined") return;
+    if (s.gcPolicy === policy) return;
+    s.gcPolicy = policy;
+    say(s, "GC policy set to " + policy + ".");
+  }
+
   function setLongTxn(s, on) {
     if (on && s.pinned === null) {
       s.pinned = s.next++;
@@ -1170,6 +1240,7 @@ var Sim = (function () {
     }
 
     moveParticles(s, dt);
+    tickBackgroundGC(s, dt);
     tickSweep(s, dt);
     tickGbak(s, dt);
     tickNbackup(s, dt);
@@ -1204,6 +1275,7 @@ var Sim = (function () {
     tick: tick,
     warm: warm,
     setCacheSize: setCacheSize,
+    setGcPolicy: setGcPolicy,
     setLongTxn: setLongTxn,
     startSweep: startSweep,
     burst: burst,

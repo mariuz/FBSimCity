@@ -199,6 +199,11 @@ var UI = (function () {
     $("ctl-sweepon").addEventListener("change", function () {
       sim.sweepEnabled = this.checked;
     });
+    if ($("ctl-gcpolicy")) {
+      $("ctl-gcpolicy").addEventListener("change", function () {
+        Sim.setGcPolicy(sim, this.value);
+      });
+    }
     $("ctl-scenario").addEventListener("change", function () {
       if (this.value) applyScenario(this.value);
     });
@@ -602,6 +607,14 @@ var UI = (function () {
           return (s.sweepEnabled ? "Switch off" : "Switch on") + " automatic sweep";
         }, fn: function (s) {
           setCheck("ctl-sweepon", !s.sweepEnabled);
+        } },
+      { id: "act-gcpolicy", label: function (s) {
+          return "GC policy: " + s.gcPolicy;
+        }, fn: function (s) {
+          var order = ["combined", "cooperative", "background"];
+          var next = order[(order.indexOf(s.gcPolicy) + 1) % order.length];
+          Sim.setGcPolicy(s, next);
+          setSelect("ctl-gcpolicy", next);
         } }
     ],
     gbak: [
@@ -698,7 +711,8 @@ var UI = (function () {
     }
     var html = "<h3>Busiest table — live version chain</h3>" +
       "<p class='fine'>Back-version reads (<code>MON$BACKVERSION_READS</code>): <b>" +
-      s.backversionReads + "</b></p>";
+      s.backversionReads + "</b> &middot; Purges (<code>MON$RECORD_PURGES</code>): <b>" +
+      s.purges + "</b> &middot; <code>GCPolicy</code>: <b>" + s.gcPolicy + "</b></p>";
     var chain = t.chain, shown = Math.min(chain.length, 10);
     for (var j = 0; j < shown; j++) {
       var idx = chain.length - 1 - j; // newest first
