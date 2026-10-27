@@ -4,7 +4,7 @@
 
 🔗 **Live: [mariuz.github.io/FBSimCity](https://mariuz.github.io/FBSimCity/)**
 
-![FBSimCity v0.9.0 under cache thrash: 16 page buffers against a hot set of 40, cache hit ratio down to 34%, and the latency panel showing where a query's time actually goes — parse and compile 47%, page cache 22%, disk reads 19%](docs/screenshot.png)
+![FBSimCity v0.10.0 under cache thrash: 16 page buffers against a hot set of 40, cache hit ratio down to 32%, and the latency panel showing where a query's time actually goes ? parse and compile 47%, page cache 21%, disk reads 18%](docs/screenshot.png)
 
 FBSimCity is an interactive isometric city where every building is a real
 Firebird subsystem and every glowing particle is a query making its commute:
