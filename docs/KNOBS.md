@@ -28,6 +28,7 @@ Three honesty levels:
 | Lock mode | `WAIT`, `NO WAIT` | `SET TRANSACTION WAIT` vs `NO WAIT`: whether a writer conflicting on a locked table queues at the Lock Manager Tower (and participates in deadlock cycle scans) or aborts immediately | **real** mechanism over 12 relation lock queues (`src/jrd/lock/lock.cpp`) |
 | Long-running transaction | on/off | Starts a transaction that never commits, pinning the OIT | **real** — this is exactly how a forgotten transaction stalls GC |
 | Rush hour ×60 | button | Injects 60 queries at once | **modeled** — a convenience for watching queueing |
+| SET STATISTICS | button | Recomputes cached `RDB$STATISTICS` selectivity across all 12 tables (`SET STATISTICS INDEX`), clearing statistics drift accumulated during writes so the optimizer returns to `B-Tree Gardens` instead of falling back to natural scans + `Sort Yard` | **real** mechanism (`src/jrd/opt.cpp`), **scaled** selectivity thresholds |
 | Speed | 0.5–4× | Multiplies the simulation timestep | n/a — presentation only |
 
 ## Replication
@@ -119,8 +120,6 @@ has to discover them by reading the source:
   for 25 model seconds before the first frame, so the cache is populated, the
   towers have versions and the markers have moved. A database that has never
   run is not a neutral starting point — it is a state you will never meet.
-- **The optimizer does not optimize.** Index vs sort is a coin flip weighted
-  by the write mix, not a cost model.
 - **Page access is a two-tier hot/cold distribution**, not a real access
   pattern derived from tables and indexes.
 - **Commit-order snapshots (Firebird 4+) are not modeled.** Visibility here

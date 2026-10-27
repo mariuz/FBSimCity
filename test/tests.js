@@ -77,10 +77,10 @@
         "control exists in the UI but is undocumented");
     });
 
-    var buttons = ["btn-sweep", "btn-burst", "btn-gbak", "btn-nb0", "btn-nb1",
-                   "btn-lock", "btn-restore", "btn-decide", "btn-trace",
-                   "btn-anatomy", "btn-tour", "btn-pause", "btn-speed",
-                   "btn-theme", "btn-help"];
+    var buttons = ["btn-sweep", "btn-burst", "btn-setstats", "btn-gbak",
+                   "btn-nb0", "btn-nb1", "btn-lock", "btn-restore",
+                   "btn-decide", "btn-trace", "btn-anatomy", "btn-tour",
+                   "btn-pause", "btn-speed", "btn-theme", "btn-help"];
     buttons.forEach(function (id) {
       t.ok("button #" + id + " exists", !!document.getElementById(id));
     });
@@ -178,6 +178,27 @@
       Sim.latencyProfile(lkNoWait).mean.lockWait,
       "WAIT " + Sim.latencyProfile(lkWait).mean.lockWait.toFixed(3) +
       "s vs NO WAIT " + Sim.latencyProfile(lkNoWait).mean.lockWait.toFixed(3) + "s");
+
+    // Cost-based optimizer & RDB$STATISTICS selectivity:
+    // Fresh statistics route selective tables (0..7) to B-Tree Gardens
+    // (indexScans > naturalScans); degraded statistics shift plans to
+    // natural scan + Sort Yard until SET STATISTICS INDEX recomputes them
+    var optFresh = Sim.create(), optStale = Sim.create();
+    optFresh.queryRate = 12; optFresh.updateRatio = 0;
+    optStale.queryRate = 12; optStale.updateRatio = 0;
+    Sim.degradeStatistics(optStale);
+    run(optFresh, 35); run(optStale, 35);
+    t.ok("fresh RDB$STATISTICS prefers B-Tree index scans",
+      optFresh.indexScans > optFresh.naturalScans,
+      "indexScans=" + optFresh.indexScans + " vs naturalScans=" + optFresh.naturalScans);
+    t.ok("stale RDB$STATISTICS shifts optimizer plans to NATURAL + SORT",
+      optStale.naturalScans > optFresh.naturalScans && optStale.indexScans === 0,
+      "stale indexScans=" + optStale.indexScans + ", naturalScans=" + optStale.naturalScans);
+    Sim.recomputeStatistics(optStale);
+    run(optStale, 25);
+    t.ok("SET STATISTICS INDEX restores B-Tree index scans",
+      optStale.statsRecomputed === 1 && optStale.indexScans > 0,
+      "statsRecomputed=" + optStale.statsRecomputed + ", indexScans=" + optStale.indexScans);
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------
@@ -664,6 +685,8 @@
       lockWaits: s.lockWaits, rollbacks: s.rollbacks,
       deltaPages: s.backup.deltaPages, generated: s.repl.generated,
       applied: s.repl.applied, sorts: s.sorts, sortSpills: s.sortSpills,
+      indexScans: s.indexScans, naturalScans: s.naturalScans,
+      statsRecomputed: s.statsRecomputed,
       time: s.time
     };
     Object.keys(nums).forEach(function (k) {

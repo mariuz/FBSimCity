@@ -92,7 +92,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   that table, detect real two-party wait cycles for deadlock rollbacks, and
   add a `WAIT` / `NO WAIT` transaction option.
 
-### 6. Cost-based optimizer choice & index selectivity (`opt.cpp`, `btr.cpp`)
+### 6. [x] Cost-based optimizer choice & index selectivity (`opt.cpp`, `btr.cpp`) — *Completed*
 - **Today in `sim.js`:** Whether a `SELECT` visits `B-Tree Gardens` or the
   `Sort Yard` is a 50/50 coin flip.
 - **In Firebird (`src/jrd/opt.cpp`):** The optimizer inspects index

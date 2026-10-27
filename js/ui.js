@@ -234,6 +234,11 @@ var UI = (function () {
     $("btn-burst").addEventListener("click", function () {
       Sim.burst(sim, 60);
     });
+    if ($("btn-setstats")) {
+      $("btn-setstats").addEventListener("click", function () {
+        Sim.recomputeStatistics(sim);
+      });
+    }
     $("btn-tour").addEventListener("click", function () { startTour(); });
     $("tour-next").addEventListener("click", function () { stepTour(1); });
     $("tour-prev").addEventListener("click", function () { stepTour(-1); });
@@ -602,10 +607,12 @@ var UI = (function () {
     els.infoBody.innerHTML = "<p>" + b.desc + "</p>" +
       (id === "mvcc" ? "<div id='chain-live'></div>" : "") +
       (id === "lock" ? "<div id='lock-live'></div>" : "") +
+      (id === "cmp" || id === "btr" ? "<div id='opt-live'></div>" : "") +
       actionsFor(id) +
       correctionLink(b.name + " (" + b.code + ")");
     if (id === "mvcc") renderChain(simRef);
     if (id === "lock") renderLocks(simRef);
+    if (id === "cmp" || id === "btr") renderOptimizer(simRef);
     wireActions();
     els.info.classList.remove("hidden");
   }
@@ -690,6 +697,20 @@ var UI = (function () {
           Sim.setLockMode(s, next);
           setSelect("ctl-lockmode", next);
         } }
+    ],
+    cmp: [
+      { id: "act-setstats", label: "SET STATISTICS INDEX (recompute)",
+        fn: function (s) { Sim.recomputeStatistics(s); } },
+      { id: "act-degradestats", label: "Simulate stale RDB$STATISTICS",
+        fn: function (s) { Sim.degradeStatistics(s); } }
+    ],
+    btr: [
+      { id: "act-setstats-btr", label: "SET STATISTICS INDEX (recompute)",
+        fn: function (s) { Sim.recomputeStatistics(s); } }
+    ],
+    met: [
+      { id: "act-setstats-met", label: "SET STATISTICS INDEX (recompute)",
+        fn: function (s) { Sim.recomputeStatistics(s); } }
     ]
   };
 
@@ -791,6 +812,26 @@ var UI = (function () {
     if (!activeRows) {
       html += "<p class='fine'>No active write locks held right now. Raise " +
         "the write mix or pick Lock contention to watch writers queue.</p>";
+    }
+    el.innerHTML = html;
+  }
+
+  function renderOptimizer(s) {
+    var el = $("opt-live");
+    if (!el) return;
+    var html = "<h3>Optimizer plans &amp; <code>RDB$STATISTICS</code></h3>" +
+      "<p class='fine'>Index scans: <b>" + s.indexScans +
+      "</b> &middot; Natural + Sort: <b>" + s.naturalScans +
+      "</b> &middot; <code>SET STATISTICS</code> runs: <b>" + s.statsRecomputed + "</b></p>";
+    for (var i = 0; i < Math.min(6, s.tables.length); i++) {
+      var t = s.tables[i];
+      var eff = Math.min(1, t.selectivity + t.statDrift);
+      var plan = eff < 0.12 ? "PLAN (T" + i + " INDEX)" : "PLAN (T" + i + " NATURAL) + SORT";
+      var cls = eff < 0.12 ? "ver-ok" : "ver-dead";
+      html += "<div class='chainrow " + cls + "'><span>T" + i + " (" +
+        eff.toFixed(3) + ")</span>" + plan +
+        (t.statDrift > 0.02 ? " <em>(drift +" + t.statDrift.toFixed(2) + ")</em>" : "") +
+        "</div>";
     }
     el.innerHTML = html;
   }
@@ -990,6 +1031,10 @@ var UI = (function () {
     }
     if (infoSelectedId === "lock" && !els.info.classList.contains("hidden")) {
       renderLocks(s);
+    }
+    if ((infoSelectedId === "cmp" || infoSelectedId === "btr") &&
+        !els.info.classList.contains("hidden")) {
+      renderOptimizer(s);
     }
     refreshActionLabels();
     renderLatency();

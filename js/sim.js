@@ -68,6 +68,7 @@ var Sim = (function () {
       // spill to temporary files on disk
       tempCacheLimit: 40,
       sorts: 0, sortSpills: 0,
+      indexScans: 0, naturalScans: 0, statsRecomputed: 0,
 
       // where completed queries actually spent their time, sampled over the
       // last LAT_SAMPLE trips rather than asserted
@@ -118,10 +119,17 @@ var Sim = (function () {
     for (var i = 0; i < TABLE_COUNT; i++) {
       // chain[0] is the oldest version, chain[last] the current one;
       // each entry is the id of the transaction that wrote it (seeds sit
-      // well below the initial markers, like rows loaded long ago)
+      // well below the initial markers, like rows loaded long ago).
+      // selectivity models RDB$STATISTICS (1 / distinct keys): tables 0..7
+      // carry selective indexes (< 0.12 -> B-Tree), while tables 8..11 carry
+      // low-selectivity indexes (>= 0.12 -> natural scan + Sort Yard).
+      var baseSel = i < 8
+        ? +(0.005 + i * 0.008).toFixed(3)
+        : +(0.18 + (i - 8) * 0.08).toFixed(3);
       s.tables.push({
         versions: 1, flash: 0, chain: [960 + i], gcFlag: false,
-        lockHolder: null, waiters: []
+        lockHolder: null, waiters: [],
+        selectivity: baseSel, statDrift: 0
       });
     }
     setCacheSize(s, s.cacheSize);
@@ -497,21 +505,34 @@ var Sim = (function () {
     }
   }
 
-  /* Walk the wait-for graph starting from `holderQ`: if `holderQ` is waiting
-   * (directly or transitively) on a table lock held by `requesterQ`, then
-   * making `requesterQ` wait on `holderQ` would form a deadlock cycle. */
+  /* Walk the wait-for graph starting from `holderQ`: if `holderQ` (or a
+   * transaction holding `requesterQ.table` while queued on a relation held
+   * by `requesterQ`) is waiting on a lock held by `requesterQ`, then making
+   * `requesterQ` wait would form a deadlock cycle. */
   function detectDeadlockCycle(s, requesterQ, holderQ) {
     var cur = holderQ, steps = 0;
     while (cur && !cur.dead && cur.waitingOn >= 0 && steps < TABLE_COUNT) {
       var tbl = s.tables[cur.waitingOn];
       var nextHolder = tbl ? tbl.lockHolder : null;
-      if (!nextHolder) return false;
+      if (!nextHolder) break;
       if (nextHolder === requesterQ ||
           requesterQ.locksHeld.indexOf(cur.waitingOn) !== -1) {
         return true;
       }
       cur = nextHolder;
       steps++;
+    }
+    for (var i = 0; i < requesterQ.locksHeld.length; i++) {
+      var heldIdx = requesterQ.locksHeld[i];
+      var heldTbl = s.tables[heldIdx];
+      if (!heldTbl) continue;
+      for (var j = 0; j < heldTbl.waiters.length; j++) {
+        var w = heldTbl.waiters[j];
+        if (w && !w.dead && w !== requesterQ &&
+            w.locksHeld.indexOf(requesterQ.table) !== -1) {
+          return true;
+        }
+      }
     }
     return false;
   }
@@ -556,7 +577,7 @@ var Sim = (function () {
     var isUpdate = traced ? true : Math.random() < s.updateRatio;
     var reads = traced ? 2 : 1 + Math.floor(Math.random() * 3);
     var tableIdx = pickTable(isUpdate);
-    var firstTable = (isUpdate && !traced && Math.random() < 0.45)
+    var firstTable = (isUpdate && !traced && Math.random() < 0.65)
       ? ((tableIdx + 1 + Math.floor(Math.random() * 2)) % 3)
       : tableIdx;
     var path = [
@@ -577,10 +598,6 @@ var Sim = (function () {
       path.push(wp("tra", 0.04, "commit"));
     } else {
       path.push(wp("mvcc", 0.04, "rversion"));
-      if (Math.random() < 0.45) {
-        var useIndex = Math.random() < 0.5;
-        path.push(useIndex ? wp("btr", 0.15) : wp("sort", 0.15, "sort"));
-      }
     }
     path.push(wp("exec", 0.08));
     path.push(wp("yvalve", 0.06, "result"));
@@ -593,6 +610,8 @@ var Sim = (function () {
       kind: isUpdate ? "update" : "select",
       table: tableIdx,
       firstTable: firstTable,
+      needsPlan: !isUpdate && Math.random() < 0.55,
+      plan: isUpdate ? "INDEX+UPD" : "NATURAL",
       locksHeld: [],
       waitingOn: -1,
       phase: "sql",           // sql -> blr -> result
@@ -649,16 +668,42 @@ var Sim = (function () {
       case "blr":
         q.phase = "blr";
         break;
+      case "compile": {
+        // Cost-based optimizer (src/jrd/opt.cpp): inspect cached index
+        // selectivity (RDB$STATISTICS = selectivity + statDrift) on q.table.
+        // Selective indexes (< 0.12) route to B-Tree Gardens; low-selectivity
+        // or stale-statistic indexes fall back to a natural scan + Sort Yard.
+        if (q.needsPlan) {
+          var ot = s.tables[q.table !== undefined ? q.table : 0];
+          var sel = Math.min(1, ot.selectivity + ot.statDrift);
+          var rvIdx = -1;
+          for (var pi = q.idx + 1; pi < q.path.length; pi++) {
+            if (q.path[pi].act === "rversion") { rvIdx = pi; break; }
+          }
+          if (rvIdx >= 0) {
+            if (sel < 0.12) {
+              q.plan = "INDEX";
+              s.indexScans++;
+              q.path.splice(rvIdx + 1, 0, wp("btr", 0.14, "btr"));
+            } else {
+              q.plan = "NATURAL+SORT";
+              s.naturalScans++;
+              q.path.splice(rvIdx + 1, 0,
+                wp("cache", 0.08, "page"),
+                wp("sort", 0.15, "sort"));
+            }
+          }
+        }
+        break;
+      }
       case "page":
         // Multi-table updates lock their first relation during the initial
         // read/modify step before requesting the second relation at LOCK.
         if (q.kind === "update" && !q.traced && q.locksHeld.length === 0 &&
             q.firstTable !== q.table) {
           var ft = s.tables[q.firstTable];
-          if (!ft.lockHolder) {
-            ft.lockHolder = q;
-            q.locksHeld.push(q.firstTable);
-          }
+          q.locksHeld.push(q.firstTable);
+          if (!ft.lockHolder) ft.lockHolder = q;
         }
         if (cacheAccess(s, false)) {
           if (q.traced) s.traceNote = "hit";
@@ -698,6 +743,13 @@ var Sim = (function () {
       }
       case "lock": {
         pruneLocks(s);
+        if (!q.traced && q.locksHeld.length === 0 && q.firstTable !== q.table) {
+          var ftLock = s.tables[q.firstTable];
+          if (!ftLock.lockHolder) {
+            ftLock.lockHolder = q;
+            q.locksHeld.push(q.firstTable);
+          }
+        }
         var lt = s.tables[q.table !== undefined ? q.table : 0];
         if (q.traced || !lt.lockHolder || lt.lockHolder === q) {
           if (!q.traced) {
@@ -737,7 +789,7 @@ var Sim = (function () {
         q.waiting = true;
         q.waitingOn = q.table;
         if (lt.waiters.indexOf(q) === -1) lt.waiters.push(q);
-        q.dwell += 0.65 + Math.min(1.4, lt.waiters.length * 0.25);
+        q.dwell += 0.85 + Math.min(1.5, lt.waiters.length * 0.28);
         break;
       }
       case "version": {
@@ -748,6 +800,9 @@ var Sim = (function () {
           t.versions++;
           s.totalVersions++;
         }
+        // Firebird does not recompute RDB$STATISTICS automatically on every
+        // write; heavy modifications drift cached selectivity until SET STATISTICS.
+        t.statDrift = Math.min(0.85, +(t.statDrift + 0.015).toFixed(4));
         t.flash = 1;
         break;
       }
@@ -1436,6 +1491,23 @@ var Sim = (function () {
 
   // ---- public API ------------------------------------------------------
 
+  function recomputeStatistics(s) {
+    for (var i = 0; i < TABLE_COUNT; i++) {
+      s.tables[i].statDrift = 0;
+    }
+    s.statsRecomputed++;
+    say(s, "SET STATISTICS INDEX: recomputed RDB$STATISTICS across all " +
+      TABLE_COUNT + " tables.");
+  }
+
+  function degradeStatistics(s) {
+    for (var i = 0; i < TABLE_COUNT; i++) {
+      s.tables[i].statDrift = 0.35;
+    }
+    say(s, "Index statistics drifted stale after bulk modifications — " +
+      "optimizer shifting to NATURAL + SORT.");
+  }
+
   function setLockMode(s, mode) {
     if (mode !== "wait" && mode !== "nowait") return;
     if (s.lockMode === mode) return;
@@ -1532,6 +1604,8 @@ var Sim = (function () {
     tick: tick,
     warm: warm,
     setCacheSize: setCacheSize,
+    recomputeStatistics: recomputeStatistics,
+    degradeStatistics: degradeStatistics,
     setLockMode: setLockMode,
     setForcedWrites: setForcedWrites,
     setGcPolicy: setGcPolicy,
