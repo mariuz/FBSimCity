@@ -232,6 +232,7 @@ then open <http://localhost:8000/>.
 - `engine.html` — what Electric Firebird is, and where the model is knowingly
   wrong
 - `docs/KNOBS.md` — knob audit: what every control really does
+- `docs/ROADMAP.md` — planned engine-accuracy and simulation improvements
 - `test/` — the test suite (open `test/index.html`; no framework, no build)
 - `tools/screenshot.ps1` — regenerates `docs/screenshot.png` from a deep link
 

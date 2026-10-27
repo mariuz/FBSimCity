@@ -137,7 +137,9 @@ has to discover them by reading the source:
 
 If one of these matters for what you are trying to understand, read the
 [Conceptual Architecture for Firebird](https://github.com/mariuz/conceptual-architecture-for-firebird-paper)
-companions instead — they are grounded in the actual source.
+companions instead — they are grounded in the actual source. Planned
+improvements to close these gaps are tracked in
+[docs/ROADMAP.md](ROADMAP.md).
 
 ## Divergence runs both ways
 
