@@ -300,7 +300,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
 
 ## Part 5 — Engine Accuracy & `firebird-wasm` `0.13.0+` Integration (`js/sim.js`, `machine/`)
 
-### 21. Live `db.sweep()`, `db.introspect()`, and Firebird 6 schema-qualified plan bridge (`firebird-wasm` `0.13.0`)
+### 21. [x] Live `db.sweep()`, `db.introspect()`, and Firebird 6 schema-qualified plan bridge (`firebird-wasm` `0.13.0`) *(Completed)*
 - **What `firebird-wasm` `0.13.0` adds:**
   - `db.sweep()` (`isc_dpb_sweep` via `IAttachment`): invokes garbage-collection
     sweep directly inside the WebAssembly engine and advances `OIT` to `OST`.

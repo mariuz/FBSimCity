@@ -293,6 +293,12 @@
     });
     t.ok("telemetry bridge parses Firebird 6 schema-qualified plans and triggers sweep",
       qFb6 && qFb6.plan === "INDEX" && telSim.sweepActive);
+    var qIntro = Sim.ingestTelemetry(telSim, {
+      schema: { tables: [{ name: "MGA_DEMO", columns: [], indexes: [] }] }
+    });
+    t.ok("telemetry bridge ingests db.introspect() catalog metadata and spawns a catalog query",
+      qIntro && telSim.lastTelemetry.schema &&
+      telSim.lastTelemetry.schema.tables.length === 1);
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------
@@ -1361,6 +1367,8 @@
       /id="explain"/.test(html) && /db\.explain\(/.test(js));
     t.ok("the machine room exposes db.sweep() in the workbench",
       /id="sweep"/.test(html) && /db\.sweep\(\)/.test(js));
+    t.ok("the machine room exposes db.introspect() in the workbench",
+      /id="introspect"/.test(html) && /db\.introspect\(\)/.test(js));
     t.ok("the machine room deletes the firebird_-prefixed IndexedDB database",
       /firebird_\$\{DB_NAME\}/.test(js));
     t.ok("every sequence computes its verdict from the results",

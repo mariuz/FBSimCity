@@ -30,6 +30,7 @@ const els = {
   run: document.getElementById('run'),
   explain: document.getElementById('explain'),
   sweep: document.getElementById('sweep'),
+  introspect: document.getElementById('introspect'),
   reset: document.getElementById('reset'),
   timing: document.getElementById('timing'),
   result: document.getElementById('result'),
@@ -298,9 +299,9 @@ const CORRESPONDENCE = [
   ['Dirty pages cost a write when evicted',
    'MON$IO_STATS: MON$PAGE_MARKS, MON$PAGE_WRITES'],
   ['Metadata is a district, not a special case',
-   'SELECT RDB$RELATION_NAME FROM RDB$RELATIONS'],
-  ['Sweep interval on the control room dial',
-   'SELECT MON$SWEEP_INTERVAL FROM MON$DATABASE'],
+   'db.introspect() or SELECT RDB$RELATION_NAME FROM RDB$RELATIONS'],
+  ['Sweep interval on the control room dial & manual Sweep',
+   'db.sweep() (isc_dpb_sweep) or SELECT MON$SWEEP_INTERVAL FROM MON$DATABASE'],
   ['Sort memory (TempCacheLimit) and cooperative GC policy',
    "SELECT RDB$CONFIG_NAME, RDB$CONFIG_VALUE FROM RDB$CONFIG WHERE RDB$CONFIG_NAME IN ('TempCacheLimit', 'GCPolicy')"],
 ];
@@ -327,6 +328,7 @@ function setButtonsDisabled(disabled) {
   els.run.disabled = disabled;
   if (els.explain) els.explain.disabled = disabled;
   if (els.sweep) els.sweep.disabled = disabled;
+  if (els.introspect) els.introspect.disabled = disabled;
 }
 
 function looksLikeQuery(sql) {
@@ -568,6 +570,39 @@ async function runSweep() {
   busy = false;
 }
 
+async function runIntrospect() {
+  if (busy || !db) return;
+  busy = true;
+  setButtonsDisabled(true);
+  setStatus('busy', 'Introspecting catalog…');
+  els.result.replaceChildren();
+  const started = performance.now();
+  try {
+    if (typeof db.introspect !== 'function') {
+      throw new Error('This engine build does not expose db.introspect().');
+    }
+    const schema = await db.introspect();
+    broadcastTelemetry({ schema });
+    const rows = (schema && Array.isArray(schema.tables))
+      ? schema.tables.map((tb) => ({
+          TABLE_NAME: tb.name,
+          COLUMNS: Array.isArray(tb.columns) ? tb.columns.length : 0,
+          INDEXES: Array.isArray(tb.indexes) ? tb.indexes.length : 0,
+          PRIMARY_KEY: Array.isArray(tb.primaryKey) ? tb.primaryKey.join(', ') : '',
+        }))
+      : [];
+    renderStep('-- db.introspect() (RDB$RELATIONS / RDB$RELATION_FIELDS / RDB$INDICES)', { rows }, null);
+    els.timing.textContent = `${Math.round(performance.now() - started)} ms`;
+  } catch (e) {
+    renderStep('-- db.introspect()', null, String((e && e.message) || e));
+    els.timing.textContent = `failed after ${Math.round(performance.now() - started)} ms`;
+  }
+  await refreshMarkers();
+  setStatus('ready', 'Ready');
+  setButtonsDisabled(false);
+  busy = false;
+}
+
 // ---- boot ----------------------------------------------------------------
 
 function buildSequenceList() {
@@ -636,6 +671,7 @@ async function boot() {
 els.run.addEventListener('click', runWorkbench);
 if (els.explain) els.explain.addEventListener('click', runExplain);
 if (els.sweep) els.sweep.addEventListener('click', runSweep);
+if (els.introspect) els.introspect.addEventListener('click', runIntrospect);
 els.sql.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runWorkbench(); }
 });

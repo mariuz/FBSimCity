@@ -1902,10 +1902,21 @@ var Sim = (function () {
       sql: tel.sql || "",
       planText: tel.planText || "",
       info: tel.info || null,
-      sweep: !!tel.sweep
+      sweep: !!tel.sweep,
+      schema: tel.schema || (s.lastTelemetry && s.lastTelemetry.schema) || null
     };
     if (tel.sweep) {
       startSweep(s, true);
+    }
+    if (tel.schema && Array.isArray(tel.schema.tables)) {
+      var nTbl = tel.schema.tables.length;
+      say(s, "Live catalog introspection (db.introspect()): " + nTbl +
+        " user table" + (nTbl === 1 ? "" : "s") + " in RDB$RELATIONS.");
+      return spawnExplainedQuery(
+        s,
+        "SELECT RDB$RELATION_NAME FROM RDB$RELATIONS",
+        "Select Expression\n  -> Table \"RDB$RELATIONS\" Access By ID\n    -> Index \"RDB$INDEX_0\" Unique Scan"
+      );
     }
     if (tel.sql || tel.planText) {
       return spawnExplainedQuery(s, tel.sql, tel.planText);

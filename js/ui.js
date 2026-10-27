@@ -881,12 +881,12 @@ var UI = (function () {
     els.infoBody.innerHTML = "<p>" + b.desc + "</p>" +
       (id === "mvcc" ? "<div id='chain-live'></div>" : "") +
       (id === "lock" ? "<div id='lock-live'></div>" : "") +
-      (id === "cmp" || id === "btr" ? "<div id='opt-live'></div>" : "") +
+      (id === "cmp" || id === "btr" || id === "met" ? "<div id='opt-live'></div>" : "") +
       actionsFor(id) +
       correctionLink(b.name + " (" + b.code + ")");
     if (id === "mvcc") renderChain(simRef);
     if (id === "lock") renderLocks(simRef);
-    if (id === "cmp" || id === "btr") renderOptimizer(simRef);
+    if (id === "cmp" || id === "btr" || id === "met") renderOptimizer(simRef);
     wireActions();
     els.info.classList.remove("hidden");
     syncInspectorTabs();
@@ -1043,7 +1043,18 @@ var UI = (function () {
     ],
     met: [
       { id: "act-setstats-met", label: "SET STATISTICS INDEX (recompute)",
-        fn: function (s) { Sim.recomputeStatistics(s); } }
+        fn: function (s) { Sim.recomputeStatistics(s); } },
+      { id: "act-introspect-met", label: "Simulate db.introspect() catalog scan",
+        fn: function (s) {
+          Sim.ingestTelemetry(s, {
+            schema: {
+              tables: [
+                { name: "MGA_DEMO", columns: [{ name: "ID" }, { name: "NAME" }], indexes: [{ name: "RDB$PRIMARY1" }] },
+                { name: "PLAN_DEMO", columns: [{ name: "ID" }, { name: "NAME" }], indexes: [{ name: "RDB$PRIMARY2" }] }
+              ]
+            }
+          });
+        } }
     ]
   };
 
@@ -1196,6 +1207,11 @@ var UI = (function () {
     if (s.lastTelemetry && (s.lastTelemetry.sql || s.lastTelemetry.planText)) {
       html += "<p class='fine'>Last <code>db.explain()</code> telemetry: <code>" +
         s.lastTelemetry.sql.slice(0, 44) + "</code></p>";
+    }
+    if (s.lastTelemetry && s.lastTelemetry.schema && Array.isArray(s.lastTelemetry.schema.tables)) {
+      var tblNames = s.lastTelemetry.schema.tables.map(function (tb) { return tb.name; }).join(", ");
+      html += "<p class='fine'>Last <code>db.introspect()</code> catalog: <b>" +
+        s.lastTelemetry.schema.tables.length + "</b> table(s) (" + (tblNames || "none") + ")</p>";
     }
     el.innerHTML = html;
   }
