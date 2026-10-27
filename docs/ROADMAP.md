@@ -336,14 +336,16 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
     `s.blobFlash`) and stream segments without evicting hot relational index
     pages.
 
-### 23. Durable write-queue (`FB_WRITE_QUEUE$`) & optimistic pre-image rollback modeling
+### 23. [x] Durable write-queue (`FB_WRITE_QUEUE$`) & optimistic pre-image rollback modeling — *Completed*
 - **What `firebird-wasm` `0.13.0` adds:** `createWriteQueue()` persists pending
   offline mutations in `FB_WRITE_QUEUE$` and rolls back local optimistic
   state using captured pre-images when a server conflict occurs.
-- **Improvement:** Add an optional **Local-first write queue** mode at `Client
-  Harbor` showing mutations staged in `FB_WRITE_QUEUE$`, flushed in ordered
-  batches through `Y-Valve Gate`, and rolled back cleanly via pre-image
-  restoration when a conflict or `NO WAIT` abort occurs.
+- **Completed:** Added an interactive **Local-first write queue** mode at `Client
+  Harbor` (`Sim.setWriteQueueMode`, `Sim.enqueueWrite`, `Sim.flushWriteQueue`)
+  showing mutations staged in `FB_WRITE_QUEUE$` (`s.writeQueue`), flushed in
+  ordered batches through `Y-Valve Gate` (`s.writeQueueFlushed`), and rolled
+  back cleanly via pre-image restoration (`s.preimageRollbacks`) when a conflict
+  or `NO WAIT` abort occurs.
 
 ### 24. Firebird 5.0 parallel sweep / index workers & Firebird 6.0 SQL schemas (`PUBLIC`)
 - **Today in `sim.js`:** Sweep is always a single truck touring `T0..T11`

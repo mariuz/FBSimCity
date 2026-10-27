@@ -774,6 +774,13 @@ var Render = (function () {
       ctx.arc(p[0], p[1], r + 2.5 * cam.zoom, 0, Math.PI * 2);
       ctx.stroke();
     }
+    if (q.fromWriteQueue) {
+      ctx.strokeStyle = "#fcc419";
+      ctx.lineWidth = Math.max(1.2, 1.6 * cam.zoom);
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], r + 2.2 * cam.zoom, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     if (q.waiting) {
       ctx.strokeStyle = "#ff6b6b";
       ctx.lineWidth = 2;
@@ -1055,6 +1062,20 @@ var Render = (function () {
         ctx.arc(lp[0], lp[1], (12 + (1 - s.deadlockFlash) * 14) * cam.zoom, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
+      }
+    }
+
+    // 4. Client Harbor (harbor): FB_WRITE_QUEUE$ local-first staging rack
+    var hrb = FB.byId.harbor;
+    if (hrb && (s.writeQueueMode || (s.writeQueue && s.writeQueue.length > 0) || s.writeQueueFlash > 0)) {
+      var qCount = Math.min(8, s.writeQueue ? s.writeQueue.length : 0);
+      var showSlots = Math.max(qCount, s.writeQueueMode ? 4 : 0);
+      for (var qi = 0; qi < showSlots; qi++) {
+        var qx = hrb.x + 0.55 + (qi % 2) * 1.45;
+        var qy = hrb.y + 0.8 + Math.floor(qi / 2) * 1.65;
+        var filled = qi < qCount;
+        drawSlab(ctx, cam, qx, qy, 0.9, 0.9, hrb.h, hrb.h + (filled ? 0.28 : 0.10),
+          filled ? "#fcc419" : "#3b5bdb", s.writeQueueFlash > 0 && filled ? 0.6 : 0);
       }
     }
   }

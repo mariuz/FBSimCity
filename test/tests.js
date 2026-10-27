@@ -312,6 +312,23 @@
     t.ok("segmented BLOB stream writes dedicated BLOB pages on Database File (PIO)",
       qBlob && qBlob.isBlob && streamSim.blobSegments >= 4,
       "blobSegments=" + streamSim.blobSegments);
+
+    // Durable write-queue (FB_WRITE_QUEUE$ / createWriteQueue in firebird-wasm 0.13.0)
+    // & optimistic pre-image rollback restoration:
+    var wqSim = Sim.create();
+    wqSim.queryRate = 12; wqSim.updateRatio = 0.9;
+    Sim.setWriteQueueMode(wqSim, true);
+    Sim.setIsolationMode(wqSim, "snapshot");
+    Sim.enqueueWrite(wqSim, 4);
+    t.ok("enqueueWrite stages pending mutations in FB_WRITE_QUEUE$",
+      wqSim.writeQueue.length === 4);
+    var flushedN = Sim.flushWriteQueue(wqSim, 4);
+    t.ok("flushWriteQueue dispatches staged mutations through Y-Valve Gate",
+      flushedN === 4 && wqSim.writeQueueFlushed >= 4);
+    run(wqSim, 30);
+    t.ok("write-queue mode restores optimistic pre-images on conflict or rollback",
+      wqSim.preimageRollbacks > 0,
+      "preimageRollbacks=" + wqSim.preimageRollbacks);
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------
@@ -804,6 +821,7 @@
       commitNumber: s.commitNumber, writeRestarts: s.writeRestarts,
       updateConflicts: s.updateConflicts, stmtCacheHits: s.stmtCacheHits,
       cursorBatches: s.cursorBatches, blobSegments: s.blobSegments,
+      writeQueueFlushed: s.writeQueueFlushed, preimageRollbacks: s.preimageRollbacks,
       astCount: s.astCount,
       time: s.time
     };

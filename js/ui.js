@@ -881,11 +881,13 @@ var UI = (function () {
     els.infoBody.innerHTML = "<p>" + b.desc + "</p>" +
       (id === "mvcc" ? "<div id='chain-live'></div>" : "") +
       (id === "lock" ? "<div id='lock-live'></div>" : "") +
+      (id === "harbor" ? "<div id='wq-live'></div>" : "") +
       (id === "cmp" || id === "btr" || id === "met" ? "<div id='opt-live'></div>" : "") +
       actionsFor(id) +
       correctionLink(b.name + " (" + b.code + ")");
     if (id === "mvcc") renderChain(simRef);
     if (id === "lock") renderLocks(simRef);
+    if (id === "harbor") renderWriteQueue(simRef);
     if (id === "cmp" || id === "btr" || id === "met") renderOptimizer(simRef);
     wireActions();
     els.info.classList.remove("hidden");
@@ -895,6 +897,16 @@ var UI = (function () {
   // Walk up to a building and operate it: the controls that belong to a
   // subsystem live on the subsystem, not only in the control room.
   var ACTIONS = {
+    harbor: [
+      { id: "act-wq-mode", label: function (s) {
+          return "Local-first write queue (FB_WRITE_QUEUE$): " + (s.writeQueueMode ? "ON" : "OFF");
+        }, fn: function (s) { Sim.setWriteQueueMode(s, !s.writeQueueMode); } },
+      { id: "act-wq-stage", label: "Stage 4 offline mutations (createWriteQueue)",
+        fn: function (s) { Sim.enqueueWrite(s, 4); } },
+      { id: "act-wq-flush", label: function (s) {
+          return "Flush FB_WRITE_QUEUE$ batch (" + (s.writeQueue ? s.writeQueue.length : 0) + " staged)";
+        }, fn: function (s) { Sim.flushWriteQueue(s, 4); } }
+    ],
     gc: [
       { id: "act-sweep", label: "Sweep now", fn: function (s) { Sim.startSweep(s, true); } },
       { id: "act-autosweep", label: function (s) {
@@ -1228,6 +1240,17 @@ var UI = (function () {
     el.innerHTML = html;
   }
 
+  function renderWriteQueue(s) {
+    var el = $("wq-live");
+    if (!el || !s) return;
+    var qLen = s.writeQueue ? s.writeQueue.length : 0;
+    el.innerHTML = "<div class='chainbox'><div class='chainhead'>" +
+      "FB_WRITE_QUEUE$ (createWriteQueue) — " + (s.writeQueueMode ? "ACTIVE" : "IDLE") +
+      "</div><p class='fine'>Staged pending mutations: <b>" + qLen + "</b> · " +
+      "Flushed batches: <b>" + (s.writeQueueFlushed || 0) + "</b> · " +
+      "Pre-image rollbacks: <b>" + (s.preimageRollbacks || 0) + "</b></p></div>";
+  }
+
   function showAbout() {
     expandInspectorRail();
     infoSelectedId = null;
@@ -1554,6 +1577,9 @@ var UI = (function () {
     }
     if (infoSelectedId === "lock" && !els.info.classList.contains("hidden")) {
       renderLocks(s);
+    }
+    if (infoSelectedId === "harbor" && !els.info.classList.contains("hidden")) {
+      renderWriteQueue(s);
     }
     if ((infoSelectedId === "cmp" || infoSelectedId === "btr") &&
         !els.info.classList.contains("hidden")) {

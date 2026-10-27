@@ -81,6 +81,11 @@ var Sim = (function () {
       cursorBatches: 0,      // cursor batch packets streamed via queryStream()
       blobSegments: 0,       // segmented BLOB I/O blocks via openBlobStream/createBlobStream
       blobFlash: 0,          // BLOB page zone activity flash on Database File (pio)
+      writeQueueMode: false, // Local-first write queue (FB_WRITE_QUEUE$ in firebird-wasm 0.13.0)
+      writeQueue: [],        // staged offline/optimistic mutations waiting to flush
+      writeQueueFlushed: 0,  // mutations flushed from FB_WRITE_QUEUE$ through Y-Valve
+      preimageRollbacks: 0,  // optimistic pre-image restorations on conflict / NO WAIT abort
+      writeQueueFlash: 0,    // visual activity flash on Client Harbor queue rack
       telemetryEvents: 0,    // live telemetry packets from firebird-wasm
       lastTelemetry: null,   // {sql, planText, info} from Machine Room / explain()
 
@@ -705,6 +710,19 @@ var Sim = (function () {
       q.txn = s.next++;
       s.active.push(q.txn);
       q.snap = Math.min(activeFloor, q.txn);
+      if (!traced && s.writeQueueMode) {
+        q.fromWriteQueue = true;
+        q.hasPreimage = true;
+        q.dwell += 0.12;
+        s.writeQueueFlash = 1;
+        if (s.writeQueue.length < 16) {
+          s.writeQueue.push({
+            table: tableIdx,
+            preimageVersion: s.tables[tableIdx] ? s.tables[tableIdx].versions : 1,
+            at: s.time
+          });
+        }
+      }
     } else {
       q.snap = activeFloor;
     }
@@ -757,6 +775,10 @@ var Sim = (function () {
     if (rolledBack) {
       s.rollbacks++;
       if (s.rolledBack.indexOf(q.txn) === -1) s.rolledBack.push(q.txn);
+      if (q.hasPreimage || q.fromWriteQueue || s.writeQueueMode) {
+        s.preimageRollbacks++;
+        s.writeQueueFlash = 1;
+      }
     }
     q.txn = null;
     q.snap = null;
@@ -792,6 +814,12 @@ var Sim = (function () {
     if (q.traced) {
       s.traceStage = step.at;
       s.traceNote = "";
+    }
+    if (q.fromWriteQueue && !q.wqFlushed && step.at === "yvalve") {
+      q.wqFlushed = true;
+      s.writeQueueFlushed++;
+      s.writeQueueFlash = 1;
+      if (s.writeQueue.length > 0) s.writeQueue.shift();
     }
     // charge this station's dwell to the right bucket
     q.latBucket = ({
@@ -1952,6 +1980,19 @@ var Sim = (function () {
       q.txn = s.next++;
       s.active.push(q.txn);
       q.snap = Math.min(activeFloor, q.txn);
+      if (s.writeQueueMode) {
+        q.fromWriteQueue = true;
+        q.hasPreimage = true;
+        q.dwell += 0.12;
+        s.writeQueueFlash = 1;
+        if (s.writeQueue.length < 16) {
+          s.writeQueue.push({
+            table: tableIdx,
+            preimageVersion: s.tables[tableIdx] ? s.tables[tableIdx].versions : 1,
+            at: s.time
+          });
+        }
+      }
     } else {
       q.snap = activeFloor;
     }
@@ -2117,6 +2158,67 @@ var Sim = (function () {
     return q;
   }
 
+  /* Durable write-queue (FB_WRITE_QUEUE$ in firebird-wasm 0.13.0):
+   * stages pending offline/optimistic mutations at Client Harbor with captured
+   * pre-images, flushes them in ordered batches through Y-Valve Gate, and
+   * restores pre-images cleanly when a server conflict or NO WAIT abort occurs. */
+  function setWriteQueueMode(s, on) {
+    var val = !!on;
+    if (s.writeQueueMode === val) return;
+    s.writeQueueMode = val;
+    s.writeQueueFlash = 1;
+    if (!val && s.writeQueue.length > 0) {
+      flushWriteQueue(s, s.writeQueue.length);
+    }
+    say(s, val
+      ? "Local-first write queue ON (FB_WRITE_QUEUE$) — mutations stage with pre-images at Client Harbor."
+      : "Local-first write queue OFF — writes dispatch directly without FB_WRITE_QUEUE$ staging.");
+  }
+
+  function enqueueWrite(s, count) {
+    var n = Math.max(1, Math.min(16, +count || 1));
+    var added = 0;
+    for (var i = 0; i < n; i++) {
+      if (s.writeQueue.length >= 24) break;
+      var tbl = pickTable(true);
+      s.writeQueue.push({
+        table: tbl,
+        preimageVersion: s.tables[tbl] ? s.tables[tbl].versions : 1,
+        at: s.time
+      });
+      added++;
+    }
+    s.writeQueueFlash = 1;
+    say(s, "Staged " + added + " optimistic mutation" + (added === 1 ? "" : "s") +
+      " in FB_WRITE_QUEUE$ (" + s.writeQueue.length + " pending).");
+    return added;
+  }
+
+  function flushWriteQueue(s, maxItems) {
+    var limit = Math.max(1, Math.min(16, +maxItems || 4));
+    var flushed = 0;
+    while (flushed < limit && s.writeQueue.length > 0) {
+      var entry = s.writeQueue.shift();
+      var prevRatio = s.updateRatio;
+      s.updateRatio = 1;
+      var q = spawnQuery(s, false);
+      s.updateRatio = prevRatio;
+      q.table = entry.table;
+      q.fromWriteQueue = true;
+      q.hasPreimage = true;
+      q.preimageVersion = entry.preimageVersion;
+      q.wqFlushed = true;
+      s.writeQueueFlushed++;
+      flushed++;
+    }
+    s.writeQueueFlash = 1;
+    if (flushed > 0) {
+      say(s, "Flushed " + flushed + " queued mutation" + (flushed === 1 ? "" : "s") +
+        " from FB_WRITE_QUEUE$ through Y-Valve Gate.");
+    }
+    return flushed;
+  }
+
   function setStmtCacheRatio(s, ratio) {
     var r = Math.max(0, Math.min(1, +ratio || 0));
     s.stmtCacheRatio = r;
@@ -2226,6 +2328,7 @@ var Sim = (function () {
     }
     if (s.diskFlash > 0) s.diskFlash -= dt * 2.5;
     if (s.blobFlash > 0) s.blobFlash -= dt * 2.0;
+    if (s.writeQueueFlash > 0) s.writeQueueFlash -= dt * 2.0;
     if (s.btrFlash > 0) s.btrFlash -= dt * 2.0;
     if (s.btrSplitFlash > 0) s.btrSplitFlash -= dt * 2.2;
     if (s.sortFlash > 0) s.sortFlash -= dt * 1.8;
@@ -2257,6 +2360,9 @@ var Sim = (function () {
     spawnExplainedQuery: spawnExplainedQuery,
     spawnCursorStream: spawnCursorStream,
     spawnBlobStream: spawnBlobStream,
+    setWriteQueueMode: setWriteQueueMode,
+    enqueueWrite: enqueueWrite,
+    flushWriteQueue: flushWriteQueue,
     ingestTelemetry: ingestTelemetry,
     recomputeStatistics: recomputeStatistics,
     degradeStatistics: degradeStatistics,
