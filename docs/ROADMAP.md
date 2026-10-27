@@ -285,7 +285,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   into the URL (`history.replaceState`) and copies it to the clipboard with a
   toast confirmation.
 
-### 20. District quick-jump bar & responsive mobile bottom-sheet layout
+### 20. [x] District quick-jump bar & responsive mobile bottom-sheet layout *(Completed)*
 - **Today in `style.css`:** On narrow/tablet screens (`< 900 px`), `#topbar nav`
   and `#stats` wrap into multiple rows, leaving a cramped viewport between the
   floating `#controls` and `#info-panel` overlays.

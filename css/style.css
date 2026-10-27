@@ -734,23 +734,87 @@ body.day .arrow { color: #51619b; }
 body.day #info-close, body.day #tour-close, body.day #trace-end, body.day .overlay-close { color: #6b7aa8; }
 body.day #info-close:hover, body.day #tour-close:hover, body.day #trace-end:hover, body.day .overlay-close:hover { color: #141c36; }
 
-/* ---- small screens ---- */
+/* ---- district quick-jump bar & small screens ---- */
+#district-jump {
+  position: fixed;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 620px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 3px 8px;
+  background: rgba(14,18,34,0.82);
+  border: 1px solid rgba(120,140,210,0.24);
+  border-radius: 999px;
+  backdrop-filter: blur(5px);
+  z-index: 9;
+}
+#district-jump::-webkit-scrollbar { display: none; }
+button.jump-pill {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #9aa7d4;
+  white-space: nowrap;
+}
+button.jump-pill:hover {
+  background: rgba(60,75,130,0.5);
+  color: #e8edff;
+}
+button.jump-pill.active {
+  background: rgba(255,169,77,0.22);
+  border-color: rgba(255,169,77,0.55);
+  color: #ffd8a8;
+}
+body.day #district-jump {
+  background: rgba(252,253,255,0.92);
+  border-color: rgba(90,110,180,0.32);
+}
+body.day button.jump-pill { color: #51619b; }
+body.day button.jump-pill:hover { background: rgba(210,220,245,0.7); color: #141c36; }
+body.day button.jump-pill.active {
+  background: rgba(210,120,30,0.16);
+  border-color: rgba(210,120,30,0.5);
+  color: #8a5a00;
+}
+
 /* The nav has grown a button per release; drop the decorative subtitle well
    before it starts pushing the bar onto a second row. */
 @media (max-width: 1150px) {
   #topbar .sub { display: none; }
   #topbar nav button, #topbar nav .ghlink { padding: 5px 9px; font-size: 12px; }
+  #district-jump { max-width: calc(100vw - 540px); }
 }
 @media (max-width: 900px) {
   #controls { width: 200px; top: 54px; }
-  #info-panel { width: min(300px, calc(100vw - 24px)); }
+  #inspector-rail { width: min(300px, calc(100vw - 24px)); top: 54px; }
+  #district-jump { max-width: calc(100vw - 24px); top: auto; bottom: 38px; }
 }
 @media (max-width: 640px) {
   #controls {
     top: auto;
-    bottom: 40px;
-    max-height: 40vh;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    bottom: 68px;
+    max-height: 38vh;
     overflow-y: auto;
+    border-radius: 12px;
+  }
+  #inspector-rail {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    bottom: 68px;
+    max-height: 44vh;
   }
   #event-log { display: none; }
   /* eleven nav items will always wrap on a phone; make them cost less */

@@ -432,6 +432,25 @@ var UI = (function () {
       });
     }
 
+    // district quick-jump pill bar (#district-jump)
+    var jumpBar = $("district-jump");
+    if (jumpBar) {
+      var jHtml = "";
+      FB.buildings.forEach(function (b) {
+        var shortName = b.name.replace(/\s*\([^)]*\)\s*/g, "");
+        jHtml += "<button type='button' class='jump-pill' data-jump='" + b.id +
+          "' title='" + b.name + " (" + b.code + ")'>" + shortName + "</button>";
+      });
+      jumpBar.innerHTML = jHtml;
+      jumpBar.querySelectorAll("[data-jump]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var id = btn.getAttribute("data-jump");
+          showBuilding(id);
+          if (onFocus) onFocus(id, 1.3);
+        });
+      });
+    }
+
     // collapsible control room — the city gets the screen back
     var ctrl = $("controls");
     var setCollapsed = function (c) {
@@ -614,17 +633,25 @@ var UI = (function () {
 
   function syncInspectorTabs() {
     var tabs = $("inspector-tabs");
-    if (!tabs) return;
-    var map = {
-      info: els.info && !els.info.classList.contains("hidden"),
-      decisions: $("decide-dock") && !$("decide-dock").classList.contains("hidden"),
-      latency: $("latency-dock") && !$("latency-dock").classList.contains("hidden"),
-      trace: els.trace && !els.trace.classList.contains("hidden")
-    };
-    tabs.querySelectorAll("[data-tab]").forEach(function (btn) {
-      var k = btn.getAttribute("data-tab");
-      btn.classList.toggle("active", !!map[k]);
-    });
+    if (tabs) {
+      var map = {
+        info: els.info && !els.info.classList.contains("hidden"),
+        decisions: $("decide-dock") && !$("decide-dock").classList.contains("hidden"),
+        latency: $("latency-dock") && !$("latency-dock").classList.contains("hidden"),
+        trace: els.trace && !els.trace.classList.contains("hidden")
+      };
+      tabs.querySelectorAll("[data-tab]").forEach(function (btn) {
+        var k = btn.getAttribute("data-tab");
+        btn.classList.toggle("active", !!map[k]);
+      });
+    }
+    var jumpBar = $("district-jump");
+    if (jumpBar) {
+      var activeId = (els.info && !els.info.classList.contains("hidden")) ? infoSelectedId : null;
+      jumpBar.querySelectorAll("[data-jump]").forEach(function (btn) {
+        btn.classList.toggle("active", btn.getAttribute("data-jump") === activeId);
+      });
+    }
   }
 
   // ---- trace -----------------------------------------------------------
@@ -1239,7 +1266,19 @@ var UI = (function () {
 
   // ---- hotkeys ---------------------------------------------------------
 
+  var HOTKEY_DISTRICTS = [
+    "harbor", "yvalve", "blrgen", "cmp", "exec", "cache", "lock", "mvcc", "tra"
+  ];
+
   function handleKey(key) {
+    if (key >= "1" && key <= "9") {
+      var targetId = HOTKEY_DISTRICTS[parseInt(key, 10) - 1];
+      if (targetId && FB.byId[targetId]) {
+        showBuilding(targetId);
+        if (onFocus) onFocus(targetId, 1.3);
+        return true;
+      }
+    }
     switch (key) {
       case " ": togglePause(); return true;
       case "t": case "T": startTour(); return true;

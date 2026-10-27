@@ -1283,6 +1283,15 @@
       shareUrl.indexOf("lock=1") !== -1 &&
       shareUrl.indexOf("rate=15") !== -1,
       shareUrl);
+
+    // District quick-jump bar & numeric hotkeys (1-9):
+    var jumpBar = document.getElementById("district-jump");
+    var pills = jumpBar ? jumpBar.querySelectorAll(".jump-pill") : [];
+    t.ok("district quick-jump bar renders a pill for every building",
+      !!jumpBar && pills.length === FB.buildings.length);
+    var handled = UI.handleKey("6"); // '6' -> cache (Page Cache Plaza)
+    t.ok("numeric hotkey '6' jumps to Page Cache Plaza and opens its panel",
+      handled && txt("info-title") === FB.byId.cache.name);
   }
 
   // ---- 8d. the throughput readout is not an estimate -------------------
