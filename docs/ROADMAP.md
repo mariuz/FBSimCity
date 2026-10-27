@@ -128,7 +128,7 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   straight to `Execution Hall`, collapsing the `Parse & compile` bar in the
   Latency panel.
 
-### 9. Server architecture switch: SuperServer vs Classic / SuperClassic
+### 9. [x] Server architecture switch: SuperServer vs Classic / SuperClassic — *Completed*
 - **Why:** Firebird's three server architectures (`SuperServer`,
   `SuperClassic`, `Classic`) behave very differently in the cache and lock
   districts:

@@ -261,6 +261,43 @@ var Render = (function () {
       }
       ctx.restore();
     }
+    // Classic / SuperClassic: draw per-attachment cache partition dividers
+    // and blocking AST signals from Lock Manager Tower to Page Cache Plaza
+    if (s.serverMode && s.serverMode !== "super") {
+      ctx.save();
+      ctx.strokeStyle = "rgba(34,211,238,0.55)";
+      ctx.lineWidth = Math.max(1, 1.5 * cam.zoom);
+      ctx.setLineDash([4 * cam.zoom, 4 * cam.zoom]);
+      for (var p = 1; p < 4; p++) {
+        var divX = b.x + 0.8 + (p * 4 - 0.5) * cw;
+        var d0 = proj(cam, divX, b.y + 0.4, 0.05);
+        var d1 = proj(cam, divX, b.y + b.d - 0.4, 0.05);
+        ctx.beginPath();
+        ctx.moveTo(d0[0], d0[1]);
+        ctx.lineTo(d1[0], d1[1]);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      if (s.astArcs && s.astArcs.length) {
+        var lk = FB.byId.lock;
+        var pLock = proj(cam, lk.x + lk.w / 2, lk.y + lk.d / 2, lk.h + 0.3);
+        ctx.lineWidth = Math.max(1.2, 1.8 * cam.zoom);
+        for (var ai = 0; ai < s.astArcs.length; ai++) {
+          var ast = s.astArcs[ai];
+          if (ast.slot < 0 || ast.slot >= s.cache.length) continue;
+          var sx = b.x + 0.8 + (ast.slot % cols) * cw;
+          var sy = b.y + 0.8 + Math.floor(ast.slot / cols) * chh;
+          var pSlot = proj(cam, sx, sy, 0.15);
+          ctx.globalAlpha = Math.max(0, Math.min(1, ast.flash * 0.85));
+          ctx.strokeStyle = "#22d3ee";
+          ctx.beginPath();
+          ctx.moveTo(pLock[0], pLock[1]);
+          ctx.lineTo(pSlot[0], pSlot[1]);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
   }
 
   function drawStorage(ctx, cam, s) {

@@ -62,6 +62,7 @@
       { id: "ctl-sweepint", doc: "Sweep interval" },
       { id: "ctl-sweepon", doc: "Automatic sweep" },
       { id: "ctl-forcedwrites", doc: "Forced writes" },
+      { id: "ctl-servermode", doc: "Server mode" },
       { id: "ctl-gcpolicy", doc: "GC policy" },
       { id: "ctl-lockmode", doc: "Lock mode" },
       { id: "ctl-isolation", doc: "Isolation" },
@@ -236,6 +237,22 @@
       Sim.latencyProfile(scOff).mean.compile * 0.35,
       "scOn " + Sim.latencyProfile(scOn).mean.compile.toFixed(3) +
       "s vs scOff " + Sim.latencyProfile(scOff).mean.compile.toFixed(3) + "s");
+
+    // ServerMode (SuperServer vs Classic / SuperClassic):
+    // Under the same 64-page total cache budget, Classic partitions buffers
+    // across 4 private attachment pools (lowering hit ratio against the
+    // 40-page hot set) and fires Lock Manager blocking ASTs (blocking_ast_bdb)
+    var smSuper = Sim.create(), smClassic = Sim.create();
+    smSuper.queryRate = 12; smSuper.updateRatio = 0.5;
+    smClassic.queryRate = 12; smClassic.updateRatio = 0.5;
+    Sim.setServerMode(smClassic, "classic");
+    run(smSuper, 45); run(smClassic, 45);
+    t.ok("Classic fires blocking ASTs on cross-attachment page contention",
+      smClassic.astCount > 0 && smSuper.astCount === 0,
+      "classic astCount=" + smClassic.astCount + ", super astCount=" + smSuper.astCount);
+    t.ok("SuperServer shared cache achieves higher hit ratio than partitioned Classic caches",
+      smSuper.hitRatio > smClassic.hitRatio,
+      "super " + smSuper.hitRatio.toFixed(2) + " vs classic " + smClassic.hitRatio.toFixed(2));
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------
@@ -726,6 +743,7 @@
       statsRecomputed: s.statsRecomputed,
       commitNumber: s.commitNumber, writeRestarts: s.writeRestarts,
       updateConflicts: s.updateConflicts, stmtCacheHits: s.stmtCacheHits,
+      astCount: s.astCount,
       time: s.time
     };
     Object.keys(nums).forEach(function (k) {
@@ -776,6 +794,7 @@
               Sim.setLockMode(s, (cases % 2) ? "wait" : "nowait");
               Sim.setIsolationMode(s, (cases % 3) ? "read_consistency" : "snapshot");
               Sim.setStmtCacheRatio(s, (cases % 2) ? 0.8 : 0);
+              Sim.setServerMode(s, ["super", "superclassic", "classic"][cases % 3]);
               Sim.setGcPolicy(s, ["combined", "cooperative", "background"][cases % 3]);
               if (cases % 5 === 0) Sim.setLongTxn(s, true);
               if (cases % 7 === 0) Sim.toggleLock(s);

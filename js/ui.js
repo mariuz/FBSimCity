@@ -208,6 +208,11 @@ var UI = (function () {
         Sim.setForcedWrites(sim, this.checked);
       });
     }
+    if ($("ctl-servermode")) {
+      $("ctl-servermode").addEventListener("change", function () {
+        Sim.setServerMode(sim, this.value);
+      });
+    }
     if ($("ctl-gcpolicy")) {
       $("ctl-gcpolicy").addEventListener("change", function () {
         Sim.setGcPolicy(sim, this.value);
@@ -716,7 +721,15 @@ var UI = (function () {
     cache: [
       { id: "act-fw-cache", label: function (s) {
           return (s.forcedWrites ? "Switch off" : "Switch on") + " forced writes";
-        }, fn: function (s) { setCheck("ctl-forcedwrites", !s.forcedWrites); } }
+        }, fn: function (s) { setCheck("ctl-forcedwrites", !s.forcedWrites); } },
+      { id: "act-servermode-cache", label: function (s) {
+          return "ServerMode: " + s.serverMode;
+        }, fn: function (s) {
+          var order = ["super", "superclassic", "classic"];
+          var next = order[(order.indexOf(s.serverMode) + 1) % order.length];
+          Sim.setServerMode(s, next);
+          setSelect("ctl-servermode", next);
+        } }
     ],
     lock: [
       { id: "act-lockmode", label: function (s) {
@@ -725,6 +738,14 @@ var UI = (function () {
           var next = s.lockMode === "nowait" ? "wait" : "nowait";
           Sim.setLockMode(s, next);
           setSelect("ctl-lockmode", next);
+        } },
+      { id: "act-servermode-lock", label: function (s) {
+          return "ServerMode: " + s.serverMode;
+        }, fn: function (s) {
+          var order = ["super", "superclassic", "classic"];
+          var next = order[(order.indexOf(s.serverMode) + 1) % order.length];
+          Sim.setServerMode(s, next);
+          setSelect("ctl-servermode", next);
         } }
     ],
     cmp: [
@@ -835,7 +856,10 @@ var UI = (function () {
       "<p class='fine'>Mode: <b>" + (s.lockMode === "nowait" ? "NO WAIT" : "WAIT") +
       "</b> &middot; Waits: <b>" + s.lockWaits +
       "</b> &middot; Deadlocks: <b>" + s.deadlocks +
-      "</b> &middot; NO WAIT aborts: <b>" + s.noWaitAborts + "</b></p>";
+      "</b> &middot; NO WAIT aborts: <b>" + s.noWaitAborts + "</b></p>" +
+      "<p class='fine'>ServerMode: <b>" + s.serverMode +
+      "</b> &middot; Blocking ASTs (<code>blocking_ast_bdb</code>): <b>" +
+      s.astCount + "</b></p>";
     var activeRows = 0;
     for (var i = 0; i < s.tables.length; i++) {
       var t = s.tables[i];

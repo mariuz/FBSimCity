@@ -67,6 +67,9 @@ var Sim = (function () {
       precedenceFlushes: 0,  // parent->child ordered flushes via CCH_precedence
       precedenceArcs: [],    // [{from, to, flash}] drawn over Page Cache Plaza
       flushAcc: 0,
+      serverMode: "super",   // super | superclassic | classic (firebird.conf ServerMode)
+      astCount: 0,           // blocking_ast_bdb cross-cache invalidations/flushes
+      astArcs: [],           // [{slot, flash}] drawn from Lock Manager Tower to CCH
 
       // sort memory (Firebird's TempCacheLimit): sorts larger than this
       // spill to temporary files on disk
@@ -176,6 +179,7 @@ var Sim = (function () {
     s.cacheSize = n;
     s.cache = [];
     if (s.precedenceArcs) s.precedenceArcs = [];
+    if (s.astArcs) s.astArcs = [];
     for (var i = 0; i < n; i++) {
       // state drives the flash colour only; `dirty` is the real bookkeeping;
       // `dep` is the index of a cache slot that must be written to disk
@@ -253,10 +257,41 @@ var Sim = (function () {
   }
 
   /* returns true on hit; on miss the page is faulted in (LRU eviction) */
-  function cacheAccess(s, isWrite) {
+  function cacheAccess(s, isWrite, attachment) {
     var page = pickPage();
-    var slot = null, slotIdx = -1, lru = null, lruIdx = 0, i;
-    for (i = 0; i < s.cache.length; i++) {
+    var startIdx = 0, endIdx = s.cache.length, i;
+    if (s.serverMode !== "super" && s.cache.length >= 4) {
+      var parts = 4;
+      var att = (attachment !== undefined && attachment !== null)
+        ? (attachment % parts)
+        : Math.floor(Math.random() * parts);
+      var partSize = Math.floor(s.cache.length / parts);
+      startIdx = att * partSize;
+      endIdx = (att === parts - 1) ? s.cache.length : (startIdx + partSize);
+      // Cross-attachment cache coherence (blocking_ast_bdb in src/jrd/cch.cpp):
+      // when another attachment caches this page and either side writes, the
+      // Lock Manager delivers a blocking AST forcing the holder to flush and
+      // release/downgrade its buffer first.
+      for (i = 0; i < s.cache.length; i++) {
+        if (i >= startIdx && i < endIdx) continue;
+        var other = s.cache[i];
+        if (other.page === page && (isWrite || other.dirty)) {
+          s.astCount++;
+          s.astArcs.push({ slot: i, flash: 1 });
+          if (s.astArcs.length > 16) s.astArcs.shift();
+          if (other.dirty) {
+            flushSlot(s, i);
+          }
+          if (isWrite) {
+            other.page = -1;
+            other.dirty = false;
+            other.dep = -1;
+          }
+        }
+      }
+    }
+    var slot = null, slotIdx = -1, lru = null, lruIdx = startIdx;
+    for (i = startIdx; i < endIdx; i++) {
       var c = s.cache[i];
       if (c.page === page) { slot = c; slotIdx = i; break; }
       if (!lru || c.lastUse < lru.lastUse) { lru = c; lruIdx = i; }
@@ -318,6 +353,10 @@ var Sim = (function () {
     for (var i = s.precedenceArcs.length - 1; i >= 0; i--) {
       s.precedenceArcs[i].flash -= dt * 1.8;
       if (s.precedenceArcs[i].flash <= 0) s.precedenceArcs.splice(i, 1);
+    }
+    for (var j = s.astArcs.length - 1; j >= 0; j--) {
+      s.astArcs[j].flash -= dt * 2.0;
+      if (s.astArcs[j].flash <= 0) s.astArcs.splice(j, 1);
     }
     if (s.forcedWrites) { s.flushAcc = 0; return; }
     // When forcedWrites is off, dirty buffers linger in the cache and are
@@ -627,6 +666,7 @@ var Sim = (function () {
       path: path, idx: 0, dwell: 0.05,
       speed: traced ? 8 : 12 + Math.random() * 5,
       kind: isUpdate ? "update" : "select",
+      attachment: Math.floor(Math.random() * 4),
       table: tableIdx,
       firstTable: firstTable,
       stmtCached: stmtCached,
@@ -740,7 +780,7 @@ var Sim = (function () {
           q.locksHeld.push(q.firstTable);
           if (!ft.lockHolder) ft.lockHolder = q;
         }
-        if (cacheAccess(s, false)) {
+        if (cacheAccess(s, false, q.attachment)) {
           if (q.traced) s.traceNote = "hit";
           if (Math.random() < 0.35) coopGC(s, q.table);
         } else {
@@ -756,7 +796,7 @@ var Sim = (function () {
         break;
       }
       case "wpage": {
-        var wHit = cacheAccess(s, true);
+        var wHit = cacheAccess(s, true, q.attachment);
         if (q.traced) s.traceNote = wHit ? "hit" : "miss";
         break;
       }
@@ -1559,6 +1599,17 @@ var Sim = (function () {
 
   // ---- public API ------------------------------------------------------
 
+  function setServerMode(s, mode) {
+    if (mode !== "super" && mode !== "superclassic" && mode !== "classic") return;
+    if (s.serverMode === mode) return;
+    s.serverMode = mode;
+    s.astArcs = [];
+    say(s, mode === "super"
+      ? "Server mode set to SuperServer — unified shared page cache across all attachments."
+      : "Server mode set to " + (mode === "classic" ? "Classic" : "SuperClassic") +
+        " — cache partitioned per attachment; coherence enforced via Lock Manager ASTs.");
+  }
+
   function setStmtCacheRatio(s, ratio) {
     var r = Math.max(0, Math.min(1, +ratio || 0));
     s.stmtCacheRatio = r;
@@ -1686,6 +1737,7 @@ var Sim = (function () {
     tick: tick,
     warm: warm,
     setCacheSize: setCacheSize,
+    setServerMode: setServerMode,
     setStmtCacheRatio: setStmtCacheRatio,
     recomputeStatistics: recomputeStatistics,
     degradeStatistics: degradeStatistics,

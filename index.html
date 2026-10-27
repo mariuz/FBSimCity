@@ -92,6 +92,15 @@
   </div>
 
   <div class="ctl">
+    <label for="ctl-servermode">Server mode</label>
+    <select id="ctl-servermode">
+      <option value="super" selected>SuperServer (shared cache)</option>
+      <option value="superclassic">SuperClassic (private caches + ASTs)</option>
+      <option value="classic">Classic (per-process caches + ASTs)</option>
+    </select>
+  </div>
+
+  <div class="ctl">
     <label for="ctl-gcpolicy">GC policy</label>
     <select id="ctl-gcpolicy">
       <option value="combined" selected>combined (SuperServer)</option>

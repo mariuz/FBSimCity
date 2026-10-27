@@ -25,6 +25,7 @@ Three honesty levels:
 | Sweep interval | 10–60 txns | `OST − OIT` transaction gap that triggers an automatic sweep | **real** mechanism, **scaled** gap — Firebird's default is 20 000 transactions (`MON$SWEEP_INTERVAL`); shrunk here so a rolled-back transaction triggers a sweep within a minute |
 | Automatic sweep | on/off | Enables the gap-triggered sweep | **real** — corresponds to setting the sweep interval to 0 |
 | Forced writes | on/off | Firebird's `MON$FORCED_WRITES` (`gfix -write sync/async`): when on (default), commits flush dirty pages synchronously in careful-write precedence order (`CCH_precedence`); when off, commits return fast in RAM and dirty buffers are flushed periodically | **real** mechanism, **scaled** timings — turning forced writes off cuts commit latency at the cost of dirty-buffer accumulation and crash exposure |
+| Server mode | `SuperServer`, `SuperClassic`, `Classic` | Firebird's `ServerMode` (`firebird.conf`): `SuperServer` shares one unified page cache across all attachments; `SuperClassic` and `Classic` partition the cache into private per-attachment buffer pools and enforce cross-connection coherence via Lock Manager blocking ASTs (`blocking_ast_bdb`) | **real** mechanism (`src/jrd/cch.cpp`), **scaled** to 4 attachment partitions |
 | GC policy | `combined`, `cooperative`, `background` | Firebird's `GCPolicy`: whether readers purge dead back-versions inline (`cooperative`, charging the reader's `version` latency and marking a cache buffer dirty), flag pages in `gc_record` bitmaps for a background thread (`background`), or both (`combined`) | **real** mechanism, **scaled** rates — `firebird-wasm` sets `cooperative` in the DPB; SuperServer defaults to `combined` |
 | Lock mode | `WAIT`, `NO WAIT` | `SET TRANSACTION WAIT` vs `NO WAIT`: whether a writer conflicting on a locked table queues at the Lock Manager Tower (and participates in deadlock cycle scans) or aborts immediately | **real** mechanism over 12 relation lock queues (`src/jrd/lock/lock.cpp`) |
 | Isolation | `READ CONSISTENCY`, `SNAPSHOT` | Firebird 4+ `READ COMMITTED READ CONSISTENCY` vs `SNAPSHOT` (`CONCURRENCY`): whether concurrent updates to a row that committed since our snapshot started trigger a statement-level commit-order (`CN`) restart or abort with an update conflict (`isc_update_conflict`) | **real** mechanism (`src/jrd/tra.cpp`, `src/jrd/vio.cpp`) |
@@ -124,8 +125,6 @@ has to discover them by reading the source:
   run is not a neutral starting point — it is a state you will never meet.
 - **Page access is a two-tier hot/cold distribution**, not a real access
   pattern derived from tables and indexes.
-- **One database, one attachment pool, no Classic/Super distinction**, no
-  page-level locks, no ASTs.
 - **Replication is one replica and one dial.** Real deployments have several
   replicas with independent lag, selective replication via
   `RDB$PUBLICATIONS`, journal archiving, and apply errors that stop
