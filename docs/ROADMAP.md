@@ -359,6 +359,36 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   - Display Firebird 6.0 `SCHEMA` namespaces (`PUBLIC`, `APP`, `AUDIT`) in the
     `Metadata Library (RDB$)` and `Compiler & Optimizer (CMP)` inspector panels.
 
+### 33. [x] `firebird-wasm` 0.20 logical replication in the Machine Room & Journal Yard — *Completed*
+- **What `firebird-wasm` 0.20 adds:** library-level logical replication —
+  `replicateDatabases()`, PSQL capture triggers writing `FB_REPL_JOURNAL$`
+  with LSNs, subscriber watermarks (`FB_REPL_WATERMARKS$`), replication slots
+  and `pruneAcked()` (`FB_REPL_SLOTS$`), `promoteReplica()`, `rewindToLsn()`,
+  a dead-letter queue (`FB_REPL_DLQ$`) and AES-256-GCM + gzip segments.
+- **Machine Room:** new **Replicate**, **Promote** and **Rewind** buttons run
+  the real API between two separate engine databases (own worker, own
+  IndexedDB store), capture writes into the journal, render the entries,
+  `replicator.stats()` lag before/after, slots and the prune horizon, and
+  compute every verdict from the returned numbers. Each run broadcasts
+  `{ replication }` telemetry to the city.
+- **City model (`sim.js`):** the Journal Yard now tracks head LSN, replica
+  watermark and retained entries; `Sim.replPruneAcked`, `Sim.toggleLaggingSlot`,
+  `Sim.replPromote` (refused while lagging unless forced), `Sim.replRewind`
+  (not replicated — leaves the replica diverged), `Sim.setReplPoison` /
+  `Sim.replRetryDlq` and `Sim.setReplEncryption`, all operable from the
+  Journal Yard and Replica Database inspectors.
+- **Honesty note:** this is distinct from Firebird 4+'s engine replication
+  (`replication.conf`, `Publisher.cpp`), which the Journal Yard still models
+  for segment shipping and `disable_on_error`; both pages say so.
+- **Upstream issues found while wiring it to the real engine** (worked around
+  in `machine/machine.js` with `firebirdSafe()`, to be removed once fixed in
+  firebird-wasm): the journal's `PUBLICATION` column is a reserved word since
+  Firebird 4 and must be quoted; trigger DDL is passed to `exec()` without
+  `SET TERM`, so the statement splitter truncates it; and trigger capture plus
+  `sync()`'s mirror capture draw LSNs from two sources and collide on
+  `FB_REPL_JOURNAL$`'s primary key, so the Machine Room captures by mirror
+  diff only.
+
 ---
 
 ## Part 6 — Next-Gen 3D Rendering: Three.js & WebGPU (`js/render-webgpu.js`, `js/render.js`)

@@ -83,6 +83,9 @@
       <button type="button" id="explain" class="ghost" disabled>Explain</button>
       <button type="button" id="sweep" class="ghost" disabled>Sweep</button>
       <button type="button" id="introspect" class="ghost" disabled>Introspect</button>
+      <button type="button" id="replicate" class="ghost" disabled title="replicateDatabases(): primary → separate replica database">Replicate</button>
+      <button type="button" id="promote" class="ghost" disabled title="promoteReplica(): fail over to the replica">Promote</button>
+      <button type="button" id="rewind" class="ghost" disabled title="rewindToLsn(): undo the last Replicate on the primary">Rewind</button>
       <button type="button" id="reset" class="ghost">Delete the database</button>
       <span class="timing" id="timing"></span>
     </div>
@@ -119,9 +122,15 @@
       draws writers queueing behind each other. There is no second session
       here to queue behind, so no lock wait to watch — only the mechanism, in
       the model.</li>
-    <li><b>No replication.</b> Firebird 4+ logical replication ships journal
-      segments to a replica database. There is no replica here, and no
-      <code>replication.conf</code>. The replication district stays a model.</li>
+    <li><b>Replication here is the library's, not the engine's.</b> The
+      <b>Replicate</b>, <b>Promote</b> and <b>Rewind</b> buttons drive
+      firebird-wasm 0.20's logical replication between two real, separate
+      databases: each write is captured into <code>FB_REPL_JOURNAL$</code>
+      with an LSN, and a subscriber applies entries past its watermark.
+      Firebird 4+'s own replication — journal segments
+      written below SQL, configured in <code>replication.conf</code> — is not
+      available in this runtime, so the city's Journal Yard and Replicator
+      still draw that mechanism as a model.</li>
     <li><b>No gbak, no nbackup.</b> Those are separate programs against a
       database file. This engine's pages live in IndexedDB.</li>
     <li><b>Sweep will not run while you watch.</b> The sweep interval is a

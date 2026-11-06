@@ -329,6 +329,71 @@
     t.ok("write-queue mode restores optimistic pre-images on conflict or rollback",
       wqSim.preimageRollbacks > 0,
       "preimageRollbacks=" + wqSim.preimageRollbacks);
+
+    // firebird-wasm 0.20 replication: slots, pruneAcked, promoteReplica,
+    // rewindToLsn, DLQ quarantine and live machine-room telemetry
+    var rp = Sim.create();
+    rp.queryRate = 10; rp.updateRatio = 0.5;
+    Sim.setReplMode(rp, "async");
+    run(rp, 20);
+    t.ok("journal LSNs advance with committed writes", rp.repl.generated > 20,
+      "generated=" + rp.repl.generated);
+    Sim.toggleLaggingSlot(rp);
+    var slotLsn = rp.repl.slots[0].lsn;
+    run(rp, 15);
+    Sim.replPruneAcked(rp);
+    t.ok("a lagging slot holds pruneAcked() back to its confirmed LSN",
+      rp.repl.prunedLsn <= slotLsn,
+      "prunedLsn=" + rp.repl.prunedLsn + ", slot=" + slotLsn);
+    Sim.toggleLaggingSlot(rp);
+    rp.queryRate = 0; run(rp, 15);
+    var prunedNow = Sim.replPruneAcked(rp);
+    t.ok("dropping the lagging slot lets pruneAcked() reclaim the journal",
+      prunedNow > 0 && rp.repl.prunedLsn === rp.repl.applied,
+      "pruned=" + prunedNow + ", prunedLsn=" + rp.repl.prunedLsn + ", applied=" + rp.repl.applied);
+
+    var pr = Sim.create();
+    pr.queryRate = 10; pr.updateRatio = 0.5;
+    Sim.setReplMode(pr, "async");
+    Sim.setReplHealth(pr, "down");
+    run(pr, 25);
+    t.ok("promoteReplica() is refused while the replica lags",
+      Sim.replPromote(pr, false) === false && pr.repl.promoteRefusals === 1 &&
+      pr.repl.primaryNode === "A");
+    t.ok("a forced promotion fails over and drops the unapplied backlog",
+      Sim.replPromote(pr, true) === true && pr.repl.primaryNode === "B" &&
+      Sim.replLag(pr) === 0);
+
+    var rw = Sim.create();
+    rw.queryRate = 10; rw.updateRatio = 0.5;
+    Sim.setReplMode(rw, "async");
+    run(rw, 20);
+    rw.queryRate = 0; run(rw, 10);
+    var headBefore = rw.repl.generated;
+    // the open segment never shipped, so undo it plus 5 the replica did apply
+    var unshipped = Sim.replLag(rw);
+    var undone = Sim.replRewind(rw, unshipped + 5);
+    t.ok("rewindToLsn() cuts the journal head back on the primary",
+      undone === unshipped + 5 && rw.repl.generated === headBefore - unshipped - 5);
+    t.ok("a rewind is not replicated: already-applied entries leave the replica diverged",
+      rw.repl.diverged === 5 && rw.repl.applied <= rw.repl.generated,
+      "diverged=" + rw.repl.diverged);
+
+    var dq = Sim.create();
+    dq.queryRate = 10; dq.updateRatio = 0.5;
+    Sim.setReplMode(dq, "async");
+    Sim.setReplPoison(dq, true);
+    run(dq, 40);
+    t.ok("poison rows are quarantined in FB_REPL_DLQ$ without stalling the stream",
+      dq.repl.dlqTotal > 0 && dq.repl.applied > dq.repl.dlqTotal,
+      "dlqTotal=" + dq.repl.dlqTotal + ", applied=" + dq.repl.applied);
+    t.ok("retryDlq() drains the quarantine", Sim.replRetryDlq(dq) > 0 && dq.repl.dlq === 0);
+
+    var live = Sim.create();
+    Sim.ingestTelemetry(live, { replication: { event: "sync", entries: 4, lagBefore: 4, lagAfter: 0, replicaWatermark: 4 } });
+    Sim.ingestTelemetry(live, { replication: { event: "promote", finalWatermark: 4 } });
+    t.ok("machine-room replication telemetry reaches the Journal Yard",
+      live.repl.liveEvents === 2 && live.repl.primaryNode === "B");
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------
@@ -822,6 +887,7 @@
       updateConflicts: s.updateConflicts, stmtCacheHits: s.stmtCacheHits,
       cursorBatches: s.cursorBatches, blobSegments: s.blobSegments,
       writeQueueFlushed: s.writeQueueFlushed, preimageRollbacks: s.preimageRollbacks,
+      prunedLsn: s.repl.prunedLsn, dlq: s.repl.dlq, diverged: s.repl.diverged,
       astCount: s.astCount,
       time: s.time
     };
@@ -832,6 +898,9 @@
     });
     if (s.repl.applied > s.repl.generated) {
       bad.push("applied " + s.repl.applied + " > generated " + s.repl.generated);
+    }
+    if (s.repl.prunedLsn > s.repl.applied) {
+      bad.push("pruned past the replica watermark: " + s.repl.prunedLsn + " > " + s.repl.applied);
     }
     if (s.oit > s.ost || s.ost > s.oat || s.oat > s.next) {
       bad.push("markers out of order: " + s.oit + "/" + s.ost + "/" + s.oat + "/" + s.next);
@@ -1401,6 +1470,16 @@
       /id="sweep"/.test(html) && /db\.sweep\(\)/.test(js));
     t.ok("the machine room exposes db.introspect() in the workbench",
       /id="introspect"/.test(html) && /db\.introspect\(\)/.test(js));
+    t.ok("the machine room drives replicateDatabases() between two separate databases",
+      /id="replicate"/.test(html) && /replicationApi\('replicateDatabases'\)/.test(js) &&
+      /REPLICA_DB_NAME/.test(js));
+    t.ok("the machine room exposes promoteReplica() and rewindToLsn()",
+      /id="promote"/.test(html) && /id="rewind"/.test(html) &&
+      /replicationApi\('promoteReplica'\)/.test(js) && /replicationApi\('rewindToLsn'\)/.test(js));
+    t.ok("the machine room says its replication is the library's, not the engine's",
+      /library's, not the engine's/.test(html) && /replication\.conf/.test(html));
+    t.ok("Delete the database also removes the replica's store",
+      /firebird_\$\{REPLICA_DB_NAME\}/.test(js));
     t.ok("the machine room deletes the firebird_-prefixed IndexedDB database",
       /firebird_\$\{DB_NAME\}/.test(js));
     t.ok("every sequence computes its verdict from the results",

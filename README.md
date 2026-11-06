@@ -4,7 +4,7 @@
 
 🔗 **Live: [mariuz.github.io/FBSimCity](https://mariuz.github.io/FBSimCity/)**
 
-![FBSimCity v0.12.0 under cache thrash: 16 page buffers against a hot set of 40, cache hit ratio down to 32%, and the latency panel showing where a query's time actually goes — parse and compile 47%, page cache 21%, disk reads 18%](docs/screenshot.png)
+![FBSimCity v0.13.0 under cache thrash: 16 page buffers against a hot set of 40, cache hit ratio down to 32%, and the latency panel showing where a query's time actually goes — parse and compile 47%, page cache 21%, disk reads 18%](docs/screenshot.png)
 
 FBSimCity is an interactive isometric city where every building is a real
 Firebird subsystem and every glowing particle is a query making its commute:
@@ -138,6 +138,18 @@ actual Firebird embedded engine compiled to WebAssembly by
 worker on the page, with a SQL workbench (`Run` and `Explain`), live attachment
 markers via `db.databaseInfo()`, and seven guided sequences that each end in a
 number you can hold against something the city draws.
+
+**Replication (firebird-wasm 0.20).** `Replicate` pairs the page's database with
+a second, separate one via `replicateDatabases()`: each write is captured into
+`FB_REPL_JOURNAL$` with an LSN, `replicator.stats()` shows the lag
+before and after one `sync()`, and slots / `pruneAcked()` show what may be
+reclaimed. `Promote` fails over with `promoteReplica()`; `Rewind` undoes the
+last batch with `rewindToLsn()` and shows the replica left diverged. Each run is
+broadcast to the city's Journal Yard, whose inspector offers the same
+operations in the model (pruning, a lagging slot, promotion, rewind, a
+dead-letter queue and encrypted segments). This is the library's logical
+replication; Firebird 4+'s own engine replication still lives only in the
+model.
 
 | Sequence | What the engine is asked | What it settles |
 |---|---|---|

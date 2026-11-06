@@ -544,7 +544,7 @@ var FB = (function () {
   ];
 
   return {
-    VERSION: "0.12.0",
+    VERSION: "0.13.0",
     buildings: buildings,
     challenges: challenges,
     byId: byId,

@@ -22,6 +22,10 @@
  */
 const ENGINE_BASE = '/electric-firebird/';
 const DB_NAME = 'fbsimcity-machine';
+// A second, independent database used as the replication target. It gets its
+// own worker and its own IndexedDB store, so "replica" means a separate
+// database, not a second table in the same file.
+const REPLICA_DB_NAME = 'fbsimcity-machine-replica';
 
 const els = {
   status: document.getElementById('status'),
@@ -31,6 +35,9 @@ const els = {
   explain: document.getElementById('explain'),
   sweep: document.getElementById('sweep'),
   introspect: document.getElementById('introspect'),
+  replicate: document.getElementById('replicate'),
+  promote: document.getElementById('promote'),
+  rewind: document.getElementById('rewind'),
   reset: document.getElementById('reset'),
   timing: document.getElementById('timing'),
   result: document.getElementById('result'),
@@ -41,6 +48,9 @@ const els = {
 };
 
 let db = null;
+let engineMod = null;
+let replicaDb = null;
+let replicator = null;
 let busy = false;
 const telemetryChannel = typeof BroadcastChannel !== 'undefined'
   ? new BroadcastChannel('fbsimcity-telemetry')
@@ -304,6 +314,14 @@ const CORRESPONDENCE = [
    'db.sweep() (isc_dpb_sweep) or SELECT MON$SWEEP_INTERVAL FROM MON$DATABASE'],
   ['Sort memory (TempCacheLimit) and cooperative GC policy',
    "SELECT RDB$CONFIG_NAME, RDB$CONFIG_VALUE FROM RDB$CONFIG WHERE RDB$CONFIG_NAME IN ('TempCacheLimit', 'GCPolicy')"],
+  ['Journal Yard: committed changes journalled in order, replica lag',
+   'Replicate — replicateDatabases() + FB_REPL_JOURNAL$ LSNs, replicator.stats().lagEntries (firebird-wasm logical replication)'],
+  ['Replication slots hold back journal pruning',
+   'publication.listSlots() / pruneAcked() against FB_REPL_SLOTS$ confirmedFlushLsn'],
+  ['Failover: the replica becomes the primary',
+   'Promote — promoteReplica() resets FB_REPL_ROLE to PRIMARY after draining lag'],
+  ['Undoing history from the journal',
+   'Rewind — rewindToLsn() replays BEFORE_JSON images in reverse LSN order'],
 ];
 
 // ---- helpers -------------------------------------------------------------
@@ -329,6 +347,10 @@ function setButtonsDisabled(disabled) {
   if (els.explain) els.explain.disabled = disabled;
   if (els.sweep) els.sweep.disabled = disabled;
   if (els.introspect) els.introspect.disabled = disabled;
+  if (els.replicate) els.replicate.disabled = disabled;
+  // promote / rewind only make sense once a replication pair exists
+  if (els.promote) els.promote.disabled = disabled || !replicator;
+  if (els.rewind) els.rewind.disabled = disabled || !replicator;
 }
 
 function looksLikeQuery(sql) {
@@ -603,6 +625,339 @@ async function runIntrospect() {
   busy = false;
 }
 
+// ---- replication (firebird-wasm 0.20 logical replication) ------------------
+//
+// What this is, stated plainly: firebird-wasm's replication is a library-level
+// logical replication layer. Changes are captured into an ordinary table,
+// FB_REPL_JOURNAL$, each stamped with an LSN (here by captureTableChanges(),
+// which diffs the table against a mirror; PSQL triggers are the other capture
+// path); a subscriber pulls entries past its watermark (FB_REPL_WATERMARKS$)
+// and applies them to a second database. It is NOT the engine's own Firebird
+// 4+ replication (replication.conf, src/jrd/replication/Publisher.cpp), which
+// ships journal segments below SQL. Both are real; they are different
+// mechanisms, and the city's Journal Yard draws the engine one.
+
+const REPL_TABLE = 'REPL_DEMO';
+const REPL_TABLES = [{ table: REPL_TABLE, primaryKey: 'ID', columns: ['ID', 'NAME'] }];
+let replPromoted = false;
+let replCheckpointLsn = null;
+
+function replicationApi(name) {
+  if (!engineMod || typeof engineMod[name] !== 'function') {
+    throw new Error(`This engine build does not expose ${name}() — ` +
+      'it needs firebird-wasm 0.20 or newer.');
+  }
+  return engineMod[name];
+}
+
+/* Workaround for firebird-wasm 0.20.1: its replication tables use a column
+ * named PUBLICATION, which has been a reserved word since Firebird 4.0
+ * (ALTER DATABASE ENABLE PUBLICATION), so the real engine rejects the DDL
+ * with "Token unknown - PUBLICATION". The library's own simulator runs on
+ * in-memory nodes and never reaches the engine, which is how it shipped.
+ *
+ * The fix here is the smallest one that is still correct SQL: quote the
+ * identifier in statements that touch the FB_REPL_* tables. "PUBLICATION"
+ * names the same column as an unquoted PUBLICATION would have, so rows still
+ * come back keyed PUBLICATION and the library reads them unchanged. Remove
+ * this once upstream quotes or renames the column. */
+const RESERVED_REPL_COLUMNS = /(^|[^"\w$])(PUBLICATION)(?![\w$"])/g;
+
+function quoteReservedReplColumns(sql) {
+  if (typeof sql !== 'string' || !/FB_REPL_/i.test(sql)) return sql;
+  return sql.replace(RESERVED_REPL_COLUMNS, '$1"$2"');
+}
+
+/* Second workaround, same release: FirebirdBrowser.exec() splits its input on
+ * ';' the way isql does, but the library passes PSQL trigger bodies to it
+ * without a SET TERM, so the CREATE TRIGGER is cut off at its first DECLARE.
+ * Wrapping PSQL DDL in SET TERM is exactly what a person would type in isql. */
+const PSQL_DDL = /^\s*(CREATE(\s+OR\s+ALTER)?|RECREATE|ALTER)\s+(TRIGGER|PROCEDURE|FUNCTION|PACKAGE)\b|^\s*EXECUTE\s+BLOCK\b/i;
+
+function wrapPsqlTerm(sql, params) {
+  if (typeof sql !== 'string' || !PSQL_DDL.test(sql) || !sql.includes(';')) return sql;
+  if (params && params.length) return sql;
+  if (/^\s*SET\s+TERM\b/i.test(sql)) return sql;
+  return `SET TERM ^ ;\n${sql.replace(/;\s*$/, '')}^\nSET TERM ; ^`;
+}
+
+function firebirdSafe(handle) {
+  const wrapExec = (target, isTx) => new Proxy(target, {
+    get(t, prop) {
+      const v = t[prop];
+      if (typeof v !== 'function') return v;
+      if (prop === 'exec' && !isTx) {
+        // only the top-level exec splits scripts; a transaction's exec does not
+        return (sql, ...rest) =>
+          v.call(t, wrapPsqlTerm(quoteReservedReplColumns(sql), rest[0]), ...rest);
+      }
+      if (prop === 'query' || prop === 'exec' || prop === 'execute') {
+        return (sql, ...rest) => v.call(t, quoteReservedReplColumns(sql), ...rest);
+      }
+      if (prop === 'transaction') {
+        return (fn, ...rest) => v.call(t, (tx) => fn(wrapExec(tx, true)), ...rest);
+      }
+      return v.bind(t);
+    },
+  });
+  return wrapExec(handle, false);
+}
+
+async function ensureReplicaDb() {
+  if (replicaDb) return replicaDb;
+  const worker = new Worker(new URL(ENGINE_BASE + 'firebird-engine-worker.js', location.origin));
+  replicaDb = new engineMod.FirebirdBrowser(REPLICA_DB_NAME, { worker });
+  await replicaDb.query('SELECT 1 AS ONE FROM RDB$DATABASE');
+  return replicaDb;
+}
+
+async function tableExists(handle, name) {
+  // name is a constant identifier from this file, never user input
+  const res = await handle.query(
+    `SELECT COUNT(*) AS N FROM RDB$RELATIONS WHERE RDB$RELATION_NAME = '${name}'`);
+  return num(res, 'N') > 0;
+}
+
+async function rowsOf(handle) {
+  const res = await handle.query(`SELECT ID, NAME FROM ${REPL_TABLE} ORDER BY ID`);
+  return (res && res.rows) || [];
+}
+
+function sameRows(a, b) {
+  return JSON.stringify(a.map((r) => [Number(r.ID), String(r.NAME)])) ===
+         JSON.stringify(b.map((r) => [Number(r.ID), String(r.NAME)]));
+}
+
+function entryRows(entries) {
+  return (entries || []).map((e) => ({
+    LSN: e.lsn,
+    OPERATION: e.operation,
+    TABLE: e.table,
+    KEY: JSON.stringify(e.key || {}),
+    ORIGIN: e.origin,
+  }));
+}
+
+async function withBusy(label, fn) {
+  if (busy || !db) return;
+  busy = true;
+  setButtonsDisabled(true);
+  setStatus('busy', label);
+  els.result.replaceChildren();
+  const started = performance.now();
+  try {
+    await fn();
+    els.timing.textContent = `${Math.round(performance.now() - started)} ms`;
+  } catch (e) {
+    renderStep('-- ' + label, null, String((e && e.message) || e));
+    els.timing.textContent = `failed after ${Math.round(performance.now() - started)} ms`;
+  }
+  await refreshMarkers();
+  setStatus('ready', 'Ready');
+  busy = false;
+  setButtonsDisabled(false);
+  if (els.replicate && replPromoted) els.replicate.disabled = true;
+}
+
+function verdictBox(ok, text) {
+  const box = el('div', ok ? 'verdict' : 'verdict miss');
+  box.append(el('b', null, ok ? 'What that shows: ' : 'Not what was expected: '));
+  box.append(document.createTextNode(text));
+  els.result.append(box);
+}
+
+async function runReplicate() {
+  await withBusy('Replicating…', async () => {
+    if (replPromoted) {
+      throw new Error('The replica was promoted to primary. Delete the database to start a fresh pair.');
+    }
+    const replicateDatabases = replicationApi('replicateDatabases');
+    const replica = await ensureReplicaDb();
+
+    // 1. the same table on two separate databases
+    const ddl = `CREATE TABLE ${REPL_TABLE} (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(40))`;
+    for (const [label, handle] of [['primary', db], ['replica', replica]]) {
+      if (!(await tableExists(handle, REPL_TABLE))) {
+        await handle.exec(ddl);
+        renderStep(`-- on the ${label}\n${ddl}`, null, null);
+      }
+    }
+
+    // 2. pair them: publication on the primary, subscription on the replica.
+    // Capture is by mirror diff (captureTableChanges), not triggers: in
+    // firebird-wasm 0.20.1 the trigger path takes LSNs from FB_REPL_LSN_GEN$
+    // while sync()'s own mirror capture assigns MAX(LSN)+1, so with both on
+    // the same rows are journalled twice and the second write collides on
+    // the journal's primary key. One capture path, one LSN source.
+    if (!replicator) {
+      replicator = await replicateDatabases({
+        primary: firebirdSafe(db),
+        replica: firebirdSafe(replica),
+        tables: REPL_TABLES,
+        direction: 'one-way',
+        installTriggers: false,
+        primaryNodeId: 'machine-primary',
+        replicaNodeId: 'machine-replica',
+      });
+      renderStep("-- replicateDatabases({ direction: 'one-way' })\n" +
+        '-- creates FB_REPL_JOURNAL$, FB_REPL_MIRROR$, FB_REPL_WATERMARKS$, FB_REPL_SLOTS$',
+        null, null);
+    }
+    const pub = replicator.primaryPublication;
+
+    // 3. write on the primary only
+    replCheckpointLsn = await pub.currentLsn();
+    const base = num(await db.query(`SELECT COALESCE(MAX(ID), 0) AS M FROM ${REPL_TABLE}`), 'M') || 0;
+    const writes = [
+      `INSERT INTO ${REPL_TABLE} (ID, NAME) VALUES (${base + 1}, 'alpha')`,
+      `INSERT INTO ${REPL_TABLE} (ID, NAME) VALUES (${base + 2}, 'beta')`,
+      `INSERT INTO ${REPL_TABLE} (ID, NAME) VALUES (${base + 3}, 'gamma')`,
+      `UPDATE ${REPL_TABLE} SET NAME = 'beta-2' WHERE ID = ${base + 2}`,
+    ];
+    for (const sql of writes) await db.exec(sql);
+    renderStep('-- on the primary\n' + writes.join(';\n') + ';', null, null);
+
+    // 4. capture into the journal, then read the lag before anyone pulls
+    await pub.captureTableChanges();
+    const entries = await pub.fetchChangesSince(replCheckpointLsn);
+    renderStep(`-- primaryPublication.captureTableChanges(); fetchChangesSince(${replCheckpointLsn})  (FB_REPL_JOURNAL$)`,
+      { rows: entryRows(entries) }, null);
+    const before = await replicator.stats();
+
+    // 5. one replication cycle, then compare both databases
+    const cycle = await replicator.sync();
+    const after = await replicator.stats();
+    const p2r = cycle && cycle.primaryToReplica ? cycle.primaryToReplica : {};
+    renderStep('-- replicator.sync() + replicator.stats()', {
+      rows: [
+        { WHEN: 'before sync', PRIMARY_LSN: before.primaryLsn, REPLICA_WATERMARK: before.replicaWatermark, LAG_ENTRIES: before.lagEntries },
+        { WHEN: 'after sync', PRIMARY_LSN: after.primaryLsn, REPLICA_WATERMARK: after.replicaWatermark, LAG_ENTRIES: after.lagEntries },
+      ],
+    }, null);
+
+    const primaryRows = await rowsOf(db);
+    const replicaRows = await rowsOf(replica);
+    renderStep(`-- on the replica\nSELECT ID, NAME FROM ${REPL_TABLE} ORDER BY ID`, { rows: replicaRows }, null);
+
+    // 6. slots hold back pruning. Report what pruneAcked() could reclaim
+    // rather than calling it: pruning deletes exactly the history Rewind needs.
+    let slots = [];
+    let safeLsn = null;
+    let retainedFrom = null;
+    try {
+      slots = await pub.listSlots();
+      retainedFrom = await pub.minRetainedLsn();
+      safeLsn = slots.length
+        ? Math.min(...slots.map((sl) => Number(sl.confirmedFlushLsn) || 0))
+        : null;
+      renderStep('-- primaryPublication.listSlots() + minRetainedLsn()  (FB_REPL_SLOTS$)', {
+        rows: slots.map((sl) => ({
+          SLOT: sl.slotName, NODE: sl.nodeId, CONFIRMED_FLUSH_LSN: sl.confirmedFlushLsn,
+          JOURNAL_RETAINED_FROM: retainedFrom, PRUNE_ACKED_WOULD_REACH: safeLsn,
+        })),
+      }, null);
+    } catch (e) { /* slots are a courtesy readout */ }
+
+    const ok = sameRows(primaryRows, replicaRows) && after.lagEntries === 0;
+    broadcastTelemetry({
+      replication: {
+        event: 'sync',
+        entries: entries.length,
+        primaryLsn: after.primaryLsn,
+        replicaWatermark: after.replicaWatermark,
+        lagBefore: before.lagEntries,
+        lagAfter: after.lagEntries,
+        applied: p2r.appliedCount || 0,
+        slots: slots.length,
+      },
+    });
+    verdictBox(ok, ok
+      ? `${writes.length} statements became ${entries.length} LSN-stamped journal ` +
+        `entr${entries.length === 1 ? 'y' : 'ies'}: captureTableChanges() diffs the ` +
+        `table against its last mirror, so it sees net state — an INSERT followed ` +
+        `by an UPDATE of the same row is journalled once, as an INSERT of the final ` +
+        `row. (The engine's own replication journals every change.) Before the pull ` +
+        `the replica was ${before.lagEntries} behind; one sync() applied ` +
+        `${p2r.appliedCount || 0} in LSN order and it now matches the primary row ` +
+        `for row (${replicaRows.length} rows, watermark ${after.replicaWatermark}). ` +
+        `Its slot confirms LSN ${safeLsn ?? '—'}, as far as pruneAcked() may delete.`
+      : `Primary has ${primaryRows.length} rows, replica has ${replicaRows.length}, ` +
+        `and ${after.lagEntries} entries are still unapplied.`);
+  });
+}
+
+async function runPromote() {
+  await withBusy('Promoting the replica…', async () => {
+    if (!replicator) throw new Error('Run Replicate first, so there is a replica to promote.');
+    const promoteReplica = replicationApi('promoteReplica');
+    const res = await promoteReplica({
+      replicaDb: firebirdSafe(replicaDb),
+      subscription: replicator.replicaSubscription,
+      previousPrimaryDb: firebirdSafe(db),
+      maxAllowedLagEntries: 0,
+      promotedNodeId: 'machine-replica-promoted',
+      tables: REPL_TABLES,
+      installTriggers: true,
+      sequenceBuffer: 100,
+    });
+    renderStep('-- promoteReplica({ maxAllowedLagEntries: 0, installTriggers: true, sequenceBuffer: 100 })', {
+      rows: [{
+        PROMOTED_NODE: res.promotedNodeId,
+        FINAL_WATERMARK: res.finalReplicaWatermark,
+        STARTING_LSN: res.promotedStartingLsn,
+        TABLES: (res.publishedTables || []).join(', '),
+        TRIGGERS: res.triggersInstalled,
+        ROLE_RESET: res.roleContextCleared,
+      }],
+    }, null);
+    replicator = null;
+    replPromoted = true;
+    broadcastTelemetry({
+      replication: { event: 'promote', finalWatermark: res.finalReplicaWatermark, promotedNodeId: res.promotedNodeId },
+    });
+    const promotedOk = (res.publishedTables || []).length > 0 && res.roleContextCleared !== false;
+    verdictBox(promotedOk, promotedOk
+      ? `The replica drained to watermark ${res.finalReplicaWatermark} (promotion is refused ` +
+      `while any entry is unapplied), had FB_REPL_ROLE set back to PRIMARY, and now ` +
+      `publishes ${(res.publishedTables || []).join(', ')} itself from LSN ` +
+      `${res.promotedStartingLsn}. That is failover: the old primary stops being the ` +
+      `source of truth. Native Firebird has no single call for this — the operator ` +
+      `reconfigures replication.conf and switches the replica to read-write.`
+      : `promoteReplica() returned without publishing any table or resetting the role ` +
+        `context, so the replica is not acting as a primary.`);
+  });
+}
+
+async function runRewind() {
+  await withBusy('Rewinding the primary…', async () => {
+    if (!replicator || replCheckpointLsn === null) {
+      throw new Error('Run Replicate first, so there is journal history to rewind.');
+    }
+    const rewindToLsn = replicationApi('rewindToLsn');
+    const res = await rewindToLsn(firebirdSafe(db), { target: replCheckpointLsn });
+    const primaryRows = await rowsOf(db);
+    const replicaRows = await rowsOf(replicaDb);
+    renderStep(`-- rewindToLsn(primary, { target: ${replCheckpointLsn} })`, {
+      rows: [{
+        PREVIOUS_HEAD: res.previousHeadLsn, REWOUND_TO: res.rewoundToLsn,
+        UNDONE: res.entriesUndone, JOURNAL_REMOVED: res.journalEntriesRemoved,
+        PRIMARY_ROWS: primaryRows.length, REPLICA_ROWS: replicaRows.length,
+      }],
+    }, null);
+    broadcastTelemetry({ replication: { event: 'rewind', entriesUndone: res.entriesUndone } });
+    const rewound = res.entriesUndone > 0;
+    verdictBox(rewound, rewound
+      ? `${res.entriesUndone} operations were undone on the primary, newest first — ` +
+      `an INSERT is inverted by a DELETE, an UPDATE by writing back its BEFORE ` +
+      `image — and the journal was cut back to LSN ` +
+      `${res.rewoundToLsn}. The replica still holds ${replicaRows.length} rows against ` +
+      `the primary's ${primaryRows.length}: a rewind is local to one node and is not ` +
+      `itself replicated. Rewinding history and replicating it are separate decisions.`
+      : `Nothing was undone — there was no journal history after LSN ${replCheckpointLsn} ` +
+        `(it may already have been rewound). Run Replicate again to write some.`);
+  });
+}
+
 // ---- boot ----------------------------------------------------------------
 
 function buildSequenceList() {
@@ -655,12 +1010,14 @@ async function boot() {
 
   try {
     const mod = await import(ENGINE_BASE + 'firebird-browser.mjs');
+    engineMod = mod;
     const worker = new Worker(new URL(ENGINE_BASE + 'firebird-engine-worker.js', location.origin));
     db = new mod.FirebirdBrowser(DB_NAME, { worker });
     const hello = await db.query(
       "SELECT TRIM(RDB$GET_CONTEXT('SYSTEM', 'ENGINE_VERSION')) AS V FROM RDB$DATABASE");
     const v = row(hello);
-    setStatus('ready', v ? `Firebird ${v.V} ready` : 'Ready');
+    const lib = mod.VERSION ? ` · firebird-wasm ${mod.VERSION}` : '';
+    setStatus('ready', v ? `Firebird ${v.V} ready${lib}` : 'Ready');
     setButtonsDisabled(false);
     await refreshMarkers();
   } catch (e) {
@@ -672,6 +1029,9 @@ els.run.addEventListener('click', runWorkbench);
 if (els.explain) els.explain.addEventListener('click', runExplain);
 if (els.sweep) els.sweep.addEventListener('click', runSweep);
 if (els.introspect) els.introspect.addEventListener('click', runIntrospect);
+if (els.replicate) els.replicate.addEventListener('click', runReplicate);
+if (els.promote) els.promote.addEventListener('click', runPromote);
+if (els.rewind) els.rewind.addEventListener('click', runRewind);
 els.sql.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runWorkbench(); }
 });
@@ -680,14 +1040,19 @@ els.reset.addEventListener('click', async () => {
   setButtonsDisabled(true);
   setStatus('booting', 'Deleting the database…');
   try {
+    if (replicator) { try { await replicator.stop(); } catch (e) { /* not started */ } }
+    if (replicaDb) await replicaDb.close();
+    replicaDb = null;
     if (db) await db.close();
     db = null;
-    await new Promise((resolve, reject) => {
-      const req = indexedDB.deleteDatabase(`firebird_${DB_NAME}`);
+    const dropStore = (store) => new Promise((resolve, reject) => {
+      const req = indexedDB.deleteDatabase(store);
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
       req.onblocked = () => setTimeout(resolve, 3000);
     });
+    await dropStore(`firebird_${DB_NAME}`);
+    await dropStore(`firebird_${REPLICA_DB_NAME}`);
   } catch (e) {
     /* closing or deleting a dead handle is fine */
   } finally {

@@ -882,12 +882,14 @@ var UI = (function () {
       (id === "mvcc" ? "<div id='chain-live'></div>" : "") +
       (id === "lock" ? "<div id='lock-live'></div>" : "") +
       (id === "harbor" ? "<div id='wq-live'></div>" : "") +
+      (id === "journal" || id === "replicator" || id === "replica" ? "<div id='repl-live'></div>" : "") +
       (id === "cmp" || id === "btr" || id === "met" ? "<div id='opt-live'></div>" : "") +
       actionsFor(id) +
       correctionLink(b.name + " (" + b.code + ")");
     if (id === "mvcc") renderChain(simRef);
     if (id === "lock") renderLocks(simRef);
     if (id === "harbor") renderWriteQueue(simRef);
+    if (id === "journal" || id === "replicator" || id === "replica") renderReplication(simRef);
     if (id === "cmp" || id === "btr" || id === "met") renderOptimizer(simRef);
     wireActions();
     els.info.classList.remove("hidden");
@@ -948,7 +950,30 @@ var UI = (function () {
           var next = s.repl.health === "down" ? "healthy" : "down";
           Sim.setReplHealth(s, next);
           setSelect("ctl-replhealth", next);
-        } }
+        } },
+      { id: "act-promote", label: "Promote replica to primary (promoteReplica)",
+        fn: function (s) { Sim.replPromote(s, false); } },
+      { id: "act-promote-force", label: "Force failover (lose unapplied changes)",
+        fn: function (s) { Sim.replPromote(s, true); } },
+      { id: "act-poison", label: function (s) {
+          return (s.repl.poison ? "Stop" : "Inject") + " poison rows (onApplyError: 'dlq')";
+        }, fn: function (s) { Sim.setReplPoison(s, !s.repl.poison); } },
+      { id: "act-retrydlq", label: function (s) {
+          return "Retry FB_REPL_DLQ$ (" + s.repl.dlq + " quarantined)";
+        }, fn: function (s) { Sim.replRetryDlq(s); } }
+    ],
+    journal: [
+      { id: "act-prune", label: "pruneAcked() — prune confirmed journal entries",
+        fn: function (s) { Sim.replPruneAcked(s); } },
+      { id: "act-slot", label: function (s) {
+          var has = s.repl.slots.some(function (sl) { return sl.name === "analytics_dr"; });
+          return has ? "Drop lagging slot analytics_dr" : "Register a lagging slot (analytics_dr)";
+        }, fn: function (s) { Sim.toggleLaggingSlot(s); } },
+      { id: "act-rewind", label: "rewindToLsn() — undo the last 10 entries",
+        fn: function (s) { Sim.replRewind(s, 10); } },
+      { id: "act-encrypt", label: function (s) {
+          return (s.repl.encrypted ? "Plain" : "Encrypt") + " journal segments (AES-256-GCM + gzip)";
+        }, fn: function (s) { Sim.setReplEncryption(s, !s.repl.encrypted); } }
     ],
     replicator: [
       { id: "act-replmode", label: function (s) {
@@ -1249,6 +1274,28 @@ var UI = (function () {
       "</div><p class='fine'>Staged pending mutations: <b>" + qLen + "</b> · " +
       "Flushed batches: <b>" + (s.writeQueueFlushed || 0) + "</b> · " +
       "Pre-image rollbacks: <b>" + (s.preimageRollbacks || 0) + "</b></p></div>";
+  }
+
+  function renderReplication(s) {
+    var el = $("repl-live");
+    if (!el || !s) return;
+    var r = s.repl;
+    var slots = "replica @ " + r.applied;
+    r.slots.forEach(function (sl) { slots += ", " + sl.name + " @ " + sl.lsn; });
+    el.innerHTML = "<div class='chainbox'><div class='chainhead'>" +
+      "Journal (FB_REPL_JOURNAL$) — primary is node " + r.primaryNode + "</div>" +
+      "<p class='fine'>Head LSN <b>" + r.generated + "</b> · replica watermark <b>" +
+      r.applied + "</b> · lag <b>" + Sim.replLag(s) + "</b> · retained <b>" +
+      Sim.replRetained(s) + "</b> (pruned ≤ " + r.prunedLsn + ")</p>" +
+      "<p class='fine'>Slots (FB_REPL_SLOTS$): " + slots + "</p>" +
+      "<p class='fine'>DLQ <b>" + r.dlq + "</b> (lifetime " + r.dlqTotal + ") · " +
+      "promotions <b>" + r.promotions + "</b> (refused " + r.promoteRefusals + ") · " +
+      "rewinds <b>" + r.rewinds + "</b> · diverged <b>" + r.diverged + "</b>" +
+      (r.encrypted ? " · segments AES-256-GCM" : "") +
+      (r.liveEvents ? " · live machine-room events <b>" + r.liveEvents + "</b>" : "") + "</p>" +
+      "<p class='fine'>Slots, pruning, promotion, rewind and the DLQ come from " +
+      "firebird-wasm 0.20's library-level replication; segment shipping and " +
+      "disable_on_error are Firebird's own engine replication.</p></div>";
   }
 
   function showAbout() {
@@ -1580,6 +1627,10 @@ var UI = (function () {
     }
     if (infoSelectedId === "harbor" && !els.info.classList.contains("hidden")) {
       renderWriteQueue(s);
+    }
+    if ((infoSelectedId === "journal" || infoSelectedId === "replicator" ||
+         infoSelectedId === "replica") && !els.info.classList.contains("hidden")) {
+      renderReplication(s);
     }
     if ((infoSelectedId === "cmp" || infoSelectedId === "btr") &&
         !els.info.classList.contains("hidden")) {

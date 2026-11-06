@@ -117,7 +117,20 @@ var Sim = (function () {
         generated: 0, applied: 0,
         disabled: false,      // disable_on_error tore replication down
         stops: 0,             // STOP_ERROR events
-        flash: 0, applyAcc: 0
+        flash: 0, applyAcc: 0,
+        // firebird-wasm 0.20 replication concepts layered onto the same
+        // journal: LSN = generated, replica watermark = applied
+        prunedLsn: 0,         // journal entries <= this LSN have been pruned
+        slots: [],            // extra subscriber slots {name, lsn} (FB_REPL_SLOTS$)
+        poison: false,        // inject poison rows the replica rejects
+        dlq: 0,               // entries currently quarantined (FB_REPL_DLQ$)
+        dlqTotal: 0,          // lifetime quarantined
+        encrypted: false,     // AES-256-GCM + gzip segments ('FBDS' envelope)
+        primaryNode: "A",     // which node currently holds the primary role
+        promotions: 0, promoteRefusals: 0,
+        rewinds: 0, rewoundEntries: 0,
+        diverged: 0,          // changes the replica holds that a rewind removed from the primary
+        liveEvents: 0         // replication telemetry from the machine room
       },
 
       // operator decisions
@@ -1452,8 +1465,9 @@ var Sim = (function () {
     if (r.flash > 0) r.flash -= dt * 2.2;
     if (r.mode === "off" || r.health === "down") return;
 
-    // apply rate on the replica, in changes per second
-    var rate = r.health === "slow" ? 7 : 34;
+    // apply rate on the replica, in changes per second; decrypting and
+    // gunzipping an encrypted segment costs the replica a little
+    var rate = (r.health === "slow" ? 7 : 34) * (r.encrypted ? 0.85 : 1);
     r.applyAcc += rate * dt;
     while (r.applyAcc >= 1 && r.segments.length) {
       var seg = r.segments[0];
@@ -1461,6 +1475,14 @@ var Sim = (function () {
       seg.changes -= take;
       r.applied += take;
       r.applyAcc -= take;
+      if (r.poison && take > 0) {
+        // onApplyError: 'dlq' — a rejected row is quarantined and the
+        // watermark moves past it, so one poison row never stalls the stream
+        var bad = 0;
+        for (var pi = 0; pi < take; pi++) if (Math.random() < 0.12) bad++;
+        r.dlq += bad;
+        r.dlqTotal += bad;
+      }
       if (seg.changes <= 0) r.segments.shift(); // commit order preserved
       if (take === 0) break;
     }
@@ -1469,6 +1491,154 @@ var Sim = (function () {
 
   function replLag(s) {
     return s.repl.generated - s.repl.applied;
+  }
+
+  /* ---- firebird-wasm 0.20 replication operations ------------------------
+   *
+   * These model the library-level logical replication in firebird-wasm
+   * (FB_REPL_JOURNAL$ / FB_REPL_WATERMARKS$ / FB_REPL_SLOTS$ / FB_REPL_DLQ$),
+   * drawn on the same Journal Yard. The LSN of a change is its position in
+   * the journal (r.generated); the replica's watermark is r.applied.
+   */
+
+  function replRetained(s) {
+    return Math.max(0, s.repl.generated - s.repl.prunedLsn);
+  }
+
+  /* pruneAcked(): delete only entries every live slot has confirmed. The
+   * replica's own slot sits at its watermark; an extra slot that stopped
+   * advancing holds the whole journal back. */
+  function replPruneAcked(s) {
+    var r = s.repl;
+    var safe = r.applied;
+    for (var i = 0; i < r.slots.length; i++) safe = Math.min(safe, r.slots[i].lsn);
+    var pruned = Math.max(0, safe - r.prunedLsn);
+    if (safe > r.prunedLsn) r.prunedLsn = safe;
+    r.flash = 1;
+    say(s, pruned > 0
+      ? "pruneAcked(): pruned " + pruned + " journal entries up to LSN " + r.prunedLsn + "."
+      : "pruneAcked(): nothing to prune — " + (r.slots.length
+        ? "slot " + r.slots[0].name + " is still at LSN " + r.slots[0].lsn + "."
+        : "the replica has not confirmed anything new."));
+    return pruned;
+  }
+
+  /* A subscriber that registered a slot and then stopped reading. */
+  function toggleLaggingSlot(s) {
+    var r = s.repl;
+    var idx = -1;
+    for (var i = 0; i < r.slots.length; i++) if (r.slots[i].name === "analytics_dr") idx = i;
+    if (idx >= 0) {
+      r.slots.splice(idx, 1);
+      say(s, "Slot analytics_dr dropped — the journal can be pruned again.");
+      return false;
+    }
+    r.slots.push({ name: "analytics_dr", lsn: r.applied });
+    say(s, "Slot analytics_dr registered at LSN " + r.applied +
+      " and stopped advancing. pruneAcked() cannot pass it.");
+    return true;
+  }
+
+  /* promoteReplica(): drain, check lag against maxAllowedLagEntries (0),
+   * reset FB_REPL_ROLE to PRIMARY, and publish from the old replica. */
+  function replPromote(s, force) {
+    var r = s.repl;
+    var lag = replLag(s);
+    if (lag > 0 && !force) {
+      r.promoteRefusals++;
+      say(s, "promoteReplica() refused: replica is " + lag +
+        " entries behind (maxAllowedLagEntries 0). Let it catch up or force it.");
+      return false;
+    }
+    if (lag > 0) {
+      // forced failover: whatever the replica never applied is lost
+      say(s, "Forced promotion — " + lag + " unapplied changes are lost with the old primary.");
+      r.generated = r.applied;
+    }
+    r.pending = 0;
+    r.segments = [];
+    r.applyAcc = 0;
+    r.disabled = false;
+    r.primaryNode = r.primaryNode === "A" ? "B" : "A";
+    r.promotions++;
+    r.flash = 1;
+    say(s, "promoteReplica(): node " + r.primaryNode + " is now the primary, publishing from LSN " +
+      r.generated + ".");
+    return true;
+  }
+
+  /* rewindToLsn(): undo the newest journal entries on the primary from their
+   * BEFORE images and cut the journal back. Entries the replica already
+   * applied are not undone there — a rewind is local to one node. */
+  function replRewind(s, n) {
+    var r = s.repl;
+    var want = Math.max(1, Math.min(+n || 10, replRetained(s)));
+    if (replRetained(s) === 0) {
+      say(s, "rewindToLsn(): nothing retained after LSN " + r.prunedLsn + " to undo.");
+      return 0;
+    }
+    var left = want;
+    var fromPending = Math.min(left, r.pending);
+    r.pending -= fromPending; left -= fromPending;
+    while (left > 0 && r.segments.length) {
+      var last = r.segments[r.segments.length - 1];
+      var t = Math.min(left, last.changes);
+      last.changes -= t; left -= t;
+      if (last.changes <= 0) r.segments.pop();
+    }
+    // whatever is left had already reached the replica
+    r.generated -= want;
+    if (left > 0) {
+      r.applied -= left;
+      r.diverged += left;
+    }
+    r.rewinds++;
+    r.rewoundEntries += want;
+    r.flash = 1;
+    say(s, "rewindToLsn(" + r.generated + "): undid " + want + " entries on the primary" +
+      (left > 0 ? "; the replica still holds " + left + " of them — rewind is not replicated." : "."));
+    return want;
+  }
+
+  function setReplPoison(s, on) {
+    s.repl.poison = !!on;
+    say(s, on
+      ? "Poison rows on: the replica rejects some entries, which go to FB_REPL_DLQ$ instead of stalling."
+      : "Poison rows off.");
+  }
+
+  function replRetryDlq(s) {
+    var n = s.repl.dlq;
+    s.repl.dlq = 0;
+    say(s, n ? "retryDlq(): re-applied " + n + " quarantined entries." : "FB_REPL_DLQ$ is empty.");
+    return n;
+  }
+
+  function setReplEncryption(s, on) {
+    s.repl.encrypted = !!on;
+    say(s, on
+      ? "Journal segments now gzip-compressed and AES-256-GCM encrypted ('FBDS' envelope)."
+      : "Journal segments back to plain 'FBDR' segments.");
+  }
+
+  /* Telemetry from the machine room's real replicateDatabases() run. */
+  function ingestReplication(s, rep) {
+    var r = s.repl;
+    r.liveEvents++;
+    r.flash = 1;
+    if (rep.event === "promote") {
+      r.primaryNode = r.primaryNode === "A" ? "B" : "A";
+      r.promotions++;
+      say(s, "Live promoteReplica() from the machine room — node " + r.primaryNode + " is primary.");
+    } else if (rep.event === "rewind") {
+      r.rewinds++;
+      r.rewoundEntries += Math.max(0, +rep.entriesUndone || 0);
+      say(s, "Live rewindToLsn() from the machine room undid " + (+rep.entriesUndone || 0) + " entries.");
+    } else {
+      say(s, "Live replicateDatabases() sync: " + (+rep.entries || 0) + " journal entries, lag " +
+        (+rep.lagBefore || 0) + " → " + (+rep.lagAfter || 0) + ", watermark " +
+        (+rep.replicaWatermark || 0) + ".");
+    }
   }
 
   function setReplMode(s, mode) {
@@ -2016,6 +2186,9 @@ var Sim = (function () {
     if (tel.sweep) {
       startSweep(s, true);
     }
+    if (tel.replication && typeof tel.replication === "object") {
+      ingestReplication(s, tel.replication);
+    }
     if (tel.schema && Array.isArray(tel.schema.tables)) {
       var nTbl = tel.schema.tables.length;
       say(s, "Live catalog introspection (db.introspect()): " + nTbl +
@@ -2389,6 +2562,14 @@ var Sim = (function () {
     setReplMode: setReplMode,
     setReplHealth: setReplHealth,
     replLag: replLag,
+    replRetained: replRetained,
+    replPruneAcked: replPruneAcked,
+    toggleLaggingSlot: toggleLaggingSlot,
+    replPromote: replPromote,
+    replRewind: replRewind,
+    setReplPoison: setReplPoison,
+    replRetryDlq: replRetryDlq,
+    setReplEncryption: setReplEncryption,
     latencyProfile: latencyProfile,
     LAT_KEYS: LAT_KEYS,
     LAT_WORK_KEYS: LAT_WORK_KEYS,

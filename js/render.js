@@ -459,6 +459,9 @@ var Render = (function () {
         : r.health === "down" ? "REPLICA UNREACHABLE"
         : r.health === "slow" ? "applying slowly — lag " + Sim.replLag(s)
         : "in step (lag " + Sim.replLag(s) + ")";
+      if (r.promotions > 0) label = "node " + (r.primaryNode === "A" ? "B" : "A") +
+        " (primary is " + r.primaryNode + ") · " + label;
+      if (r.diverged > 0) label += " · " + r.diverged + " diverged";
       ctx.fillText(label, lp[0], lp[1]);
     }
   }
@@ -502,6 +505,22 @@ var Render = (function () {
       ctx.fillStyle = "#ff8787";
       ctx.font = "600 " + (10 * Math.min(cam.zoom, 1.2)) + "px 'Segoe UI', sans-serif";
       ctx.fillText("+" + (r.segments.length - 24) + " more segments", mp[0], mp[1]);
+    }
+
+    // FB_REPL_DLQ$ quarantine bin: rejected rows set aside, stream keeps going
+    if (r.dlq > 0) {
+      var dh = 0.15 + Math.min(r.dlq, 40) * 0.02;
+      drawBox(ctx, cam, b.x + b.w - 1.1, b.y + 0.3, 0.7, 0.7, dh, "#e03131", 0);
+    }
+    if (cam.zoom > 0.75) {
+      var ip = proj(cam, b.x + 0.4, b.y + 0.35, 0);
+      ctx.fillStyle = T.labelDim;
+      ctx.font = (9 * Math.min(cam.zoom, 1.2)) + "px Consolas, monospace";
+      var line = "LSN " + r.generated + " · watermark " + r.applied +
+        " · retained " + Sim.replRetained(s);
+      if (r.encrypted) line += " · AES-GCM";
+      if (r.dlq > 0) line += " · DLQ " + r.dlq;
+      ctx.fillText(line, ip[0], ip[1]);
     }
   }
 
