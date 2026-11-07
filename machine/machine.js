@@ -784,23 +784,25 @@ async function runReplicate() {
     }
 
     // 2. pair them: publication on the primary, subscription on the replica.
-    // Capture is by mirror diff (captureTableChanges), not triggers: in
-    // firebird-wasm 0.20.1 the trigger path takes LSNs from FB_REPL_LSN_GEN$
-    // while sync()'s own mirror capture assigns MAX(LSN)+1, so with both on
-    // the same rows are journalled twice and the second write collides on
-    // the journal's primary key. One capture path, one LSN source.
+    // On firebird-wasm >= 0.20.2, PSQL capture triggers (FB_REPL_TRG_REPL_DEMO$)
+    // and captureTableChanges() share FB_REPL_LSN_GEN$ and deduplicate keys;
+    // on 0.20.1, captureTableChanges() assigns MAX(LSN)+1 without advancing
+    // FB_REPL_LSN_GEN$, so we enable triggers automatically from 0.20.2 onward.
+    const engVer = String((engineMod && engineMod.VERSION) || '');
+    const useTriggers = engVer >= '0.20.2';
     if (!replicator) {
       replicator = await replicateDatabases({
         primary: firebirdSafe(db),
         replica: firebirdSafe(replica),
         tables: REPL_TABLES,
         direction: 'one-way',
-        installTriggers: false,
+        installTriggers: useTriggers,
         primaryNodeId: 'machine-primary',
         replicaNodeId: 'machine-replica',
       });
-      renderStep("-- replicateDatabases({ direction: 'one-way' })\n" +
-        '-- creates FB_REPL_JOURNAL$, FB_REPL_MIRROR$, FB_REPL_WATERMARKS$, FB_REPL_SLOTS$',
+      renderStep(`-- replicateDatabases({ direction: 'one-way', installTriggers: ${useTriggers} })\n` +
+        '-- creates FB_REPL_JOURNAL$, FB_REPL_MIRROR$, FB_REPL_WATERMARKS$, FB_REPL_SLOTS$' +
+        (useTriggers ? ', FB_REPL_TRG_REPL_DEMO$' : ''),
         null, null);
     }
     const pub = replicator.primaryPublication;
@@ -817,10 +819,10 @@ async function runReplicate() {
     for (const sql of writes) await db.exec(sql);
     renderStep('-- on the primary\n' + writes.join(';\n') + ';', null, null);
 
-    // 4. capture into the journal, then read the lag before anyone pulls
-    await pub.captureTableChanges();
+    // 4. capture into the journal (via trigger on >= 0.20.2, or mirror diff on 0.20.1)
+    if (!useTriggers) await pub.captureTableChanges();
     const entries = await pub.fetchChangesSince(replCheckpointLsn);
-    renderStep(`-- primaryPublication.captureTableChanges(); fetchChangesSince(${replCheckpointLsn})  (FB_REPL_JOURNAL$)`,
+    renderStep(`-- primaryPublication.${useTriggers ? '' : 'captureTableChanges(); '}fetchChangesSince(${replCheckpointLsn})  (FB_REPL_JOURNAL$)`,
       { rows: entryRows(entries) }, null);
     const before = await replicator.stats();
 
@@ -873,11 +875,11 @@ async function runReplicate() {
     });
     verdictBox(ok, ok
       ? `${writes.length} statements became ${entries.length} LSN-stamped journal ` +
-        `entr${entries.length === 1 ? 'y' : 'ies'}: captureTableChanges() diffs the ` +
-        `table against its last mirror, so it sees net state — an INSERT followed ` +
-        `by an UPDATE of the same row is journalled once, as an INSERT of the final ` +
-        `row. (The engine's own replication journals every change.) Before the pull ` +
-        `the replica was ${before.lagEntries} behind; one sync() applied ` +
+        `entr${entries.length === 1 ? 'y' : 'ies'} in FB_REPL_JOURNAL$` +
+        (useTriggers
+          ? `, captured live by the PSQL trigger FB_REPL_TRG_REPL_DEMO$ (3 INSERTs and 1 UPDATE with its BEFORE and AFTER JSON images).`
+          : `: captureTableChanges() diffs the table against its last mirror, so it sees net state — an INSERT followed by an UPDATE of the same row is journalled once, as an INSERT of the final row.`) +
+        ` Before the pull the replica was ${before.lagEntries} behind; one sync() applied ` +
         `${p2r.appliedCount || 0} in LSN order and it now matches the primary row ` +
         `for row (${replicaRows.length} rows, watermark ${after.replicaWatermark}). ` +
         `Its slot confirms LSN ${safeLsn ?? '—'}, as far as pruneAcked() may delete.`
