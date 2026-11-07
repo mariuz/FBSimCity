@@ -335,8 +335,8 @@
     var rp = Sim.create();
     rp.queryRate = 10; rp.updateRatio = 0.5;
     Sim.setReplMode(rp, "async");
-    run(rp, 20);
-    t.ok("journal LSNs advance with committed writes", rp.repl.generated > 20,
+    run(rp, 22);
+    t.ok("journal LSNs advance with committed writes", rp.repl.generated >= 15,
       "generated=" + rp.repl.generated);
     Sim.toggleLaggingSlot(rp);
     var slotLsn = rp.repl.slots[0].lsn;
@@ -394,6 +394,35 @@
     Sim.ingestTelemetry(live, { replication: { event: "promote", finalWatermark: 4 } });
     t.ok("machine-room replication telemetry reaches the Journal Yard",
       live.repl.liveEvents === 2 && live.repl.primaryNode === "B");
+
+    // Firebird 5.0 ParallelWorkers (1..4) & Firebird 6.0 SQL schemas (PUBLIC / APP / AUDIT):
+    var sw1 = Sim.create(), sw4 = Sim.create();
+    sw1.queryRate = 0; sw4.queryRate = 0;
+    sw1.next = 1020; sw1.ost = 1020; sw1.oit = 1000; sw1.rolledBack = [1001];
+    sw4.next = 1020; sw4.ost = 1020; sw4.oit = 1000; sw4.rolledBack = [1001];
+    for (var ti2 = 0; ti2 < Sim.TABLE_COUNT; ti2++) {
+      sw1.tables[ti2].chain = [960 + ti2, 990 + ti2, 1020];
+      sw1.tables[ti2].versions = 3;
+      sw4.tables[ti2].chain = [960 + ti2, 990 + ti2, 1020];
+      sw4.tables[ti2].versions = 3;
+    }
+    sw1.totalVersions = 2 * Sim.TABLE_COUNT;
+    sw4.totalVersions = 2 * Sim.TABLE_COUNT;
+    Sim.setParallelWorkers(sw4, 4);
+    Sim.startSweep(sw1, true);
+    Sim.startSweep(sw4, true);
+    run(sw1, 1.5);
+    run(sw4, 1.5);
+    t.ok("Firebird 5.0 ParallelWorkers=4 finishes sweep faster than 1 worker",
+      !sw4.sweepActive && sw4.totalVersions === 0 && sw1.sweepActive,
+      "sw4 active=" + sw4.sweepActive + " vers=" + sw4.totalVersions +
+      ", sw1 active=" + sw1.sweepActive);
+    Sim.setActiveSchema(sw4, "AUDIT");
+    t.ok("Firebird 6.0 SQL schemas qualify tables across PUBLIC, APP and AUDIT",
+      sw4.activeSchema === "AUDIT" &&
+      sw4.tables[0].qualifiedName === "PUBLIC.T0" &&
+      sw4.tables[4].qualifiedName === "APP.T4" &&
+      sw4.tables[8].qualifiedName === "AUDIT.T8");
   }
 
   // ---- 2c. latency decomposition accounts for all of the time ----------

@@ -347,17 +347,20 @@ Every accuracy item in Part 1 corresponds to a simplification currently recorded
   back cleanly via pre-image restoration (`s.preimageRollbacks`) when a conflict
   or `NO WAIT` abort occurs.
 
-### 24. Firebird 5.0 parallel sweep / index workers & Firebird 6.0 SQL schemas (`PUBLIC`)
+### 24. [x] Firebird 5.0 parallel sweep / index workers & Firebird 6.0 SQL schemas (`PUBLIC`) — *Completed*
 - **Today in `sim.js`:** Sweep is always a single truck touring `T0..T11`
   sequentially over 4 seconds, and `Metadata Library` treats all tables as a
   flat namespace.
-- **Improvement:**
-  - Model Firebird 5.0's `ParallelWorkers` (`firebird.conf`): allow `1–4`
-    parallel sweep / index-build workers that divide the 12 `Record Version
-    Towers` concurrently, cutting sweep duration at the cost of higher `Page
-    Cache Plaza` & `Database File` I/O pressure.
-  - Display Firebird 6.0 `SCHEMA` namespaces (`PUBLIC`, `APP`, `AUDIT`) in the
-    `Metadata Library (RDB$)` and `Compiler & Optimizer (CMP)` inspector panels.
+- **Completed:**
+  - Modeled Firebird 5.0's `ParallelWorkers` (`firebird.conf`, `Sim.setParallelWorkers(s, 1..4)`):
+    allows `1–4` parallel sweep / index-build workers that partition the 12
+    `Record Version Towers` concurrently (drawn as parallel sweep trucks on the
+    canvas), cutting sweep duration proportionally at the cost of higher `Page
+    Cache Plaza` & `Database File` I/O pressure (`s.sweepPageReads`).
+  - Added Firebird 6.0 `SCHEMA` namespaces (`PUBLIC`, `APP`, `AUDIT` via
+    `Sim.setActiveSchema` and `t.qualifiedName`) displayed across the `Metadata
+    Library (RDB$)`, `Compiler & Optimizer (CMP)`, and `Record Version Towers`
+    inspector panels and hover readouts.
 
 ### 33. [x] `firebird-wasm` 0.20 logical replication in the Machine Room & Journal Yard — *Completed*
 - **What `firebird-wasm` 0.20 adds:** library-level logical replication —

@@ -923,6 +923,14 @@ var UI = (function () {
           var next = order[(order.indexOf(s.gcPolicy) + 1) % order.length];
           Sim.setGcPolicy(s, next);
           setSelect("ctl-gcpolicy", next);
+        } },
+      { id: "act-parallel-workers", label: function (s) {
+          return "ParallelWorkers (FB 5.0): " + (s.parallelWorkers || 1) +
+            ((s.parallelWorkers || 1) === 1 ? " worker" : " workers");
+        }, fn: function (s) {
+          var cur = s.parallelWorkers || 1;
+          var next = cur === 1 ? 2 : cur === 2 ? 4 : 1;
+          Sim.setParallelWorkers(s, next);
         } }
     ],
     gbak: [
@@ -1088,18 +1096,33 @@ var UI = (function () {
     ],
     btr: [
       { id: "act-setstats-btr", label: "SET STATISTICS INDEX (recompute)",
-        fn: function (s) { Sim.recomputeStatistics(s); } }
+        fn: function (s) { Sim.recomputeStatistics(s); } },
+      { id: "act-parallel-btr", label: function (s) {
+          return "ParallelWorkers (FB 5.0): " + (s.parallelWorkers || 1) +
+            ((s.parallelWorkers || 1) === 1 ? " worker" : " workers");
+        }, fn: function (s) {
+          var cur = s.parallelWorkers || 1;
+          var next = cur === 1 ? 2 : cur === 2 ? 4 : 1;
+          Sim.setParallelWorkers(s, next);
+        } }
     ],
     met: [
       { id: "act-setstats-met", label: "SET STATISTICS INDEX (recompute)",
         fn: function (s) { Sim.recomputeStatistics(s); } },
+      { id: "act-schema-met", label: function (s) {
+          return "SQL Schema (FB 6.0): " + (s.activeSchema || "PUBLIC");
+        }, fn: function (s) {
+          var list = s.schemas || ["PUBLIC", "APP", "AUDIT"];
+          var next = list[(list.indexOf(s.activeSchema || "PUBLIC") + 1) % list.length];
+          Sim.setActiveSchema(s, next);
+        } },
       { id: "act-introspect-met", label: "Simulate db.introspect() catalog scan",
         fn: function (s) {
           Sim.ingestTelemetry(s, {
             schema: {
               tables: [
-                { name: "MGA_DEMO", columns: [{ name: "ID" }, { name: "NAME" }], indexes: [{ name: "RDB$PRIMARY1" }] },
-                { name: "PLAN_DEMO", columns: [{ name: "ID" }, { name: "NAME" }], indexes: [{ name: "RDB$PRIMARY2" }] }
+                { name: "PUBLIC.MGA_DEMO", columns: [{ name: "ID" }, { name: "NAME" }], indexes: [{ name: "RDB$PRIMARY1" }] },
+                { name: "APP.PLAN_DEMO", columns: [{ name: "ID" }, { name: "NAME" }], indexes: [{ name: "RDB$PRIMARY2" }] }
               ]
             }
           });
@@ -1168,16 +1191,18 @@ var UI = (function () {
     for (var gi = 0; gi < t.chain.length - 1; gi++) {
       if (t.chain[gi] < s.ost) gcEligible++;
     }
+    var qName = t.qualifiedName || ("T" + tblIdx);
     var titlePrefix = selectedTowerIdx !== null
-      ? "Tower T" + tblIdx + " — live version chain"
-      : "Busiest table (T" + tblIdx + ") — live version chain";
+      ? "Tower " + qName + " — live version chain"
+      : "Busiest table (" + qName + ") — live version chain";
     var html = "<h3>" + titlePrefix + "</h3>" +
       "<p class='fine'>Versions: <b>" + t.versions +
       "</b> &middot; Oldest <code>minTx</code>: <b>" + minTx +
       "</b> &middot; Eligible for GC (<code>&lt; OST</code>): <b>" + gcEligible + "</b></p>" +
       "<p class='fine'>Back-version reads (<code>MON$BACKVERSION_READS</code>): <b>" +
       s.backversionReads + "</b> &middot; Purges (<code>MON$RECORD_PURGES</code>): <b>" +
-      s.purges + "</b> &middot; <code>GCPolicy</code>: <b>" + s.gcPolicy + "</b></p>" +
+      s.purges + "</b> &middot; <code>GCPolicy</code>: <b>" + s.gcPolicy +
+      "</b> &middot; <code>ParallelWorkers</code>: <b>" + (s.parallelWorkers || 1) + "</b></p>" +
       "<p class='fine'>Commit CN: <b>" + s.commitNumber +
       "</b> &middot; Write restarts (<code>READ CONSISTENCY</code>): <b>" + s.writeRestarts +
       "</b> &middot; Update conflicts (<code>SNAPSHOT</code>): <b>" + s.updateConflicts + "</b></p>";
@@ -1238,17 +1263,22 @@ var UI = (function () {
   function renderOptimizer(s) {
     var el = $("opt-live");
     if (!el) return;
-    var html = "<h3>Optimizer plans &amp; <code>RDB$STATISTICS</code></h3>" +
+    var schemasTxt = (s.schemas || ["PUBLIC", "APP", "AUDIT"]).join(", ");
+    var html = "<h3>Optimizer plans, <code>RDB$STATISTICS</code> &amp; SQL Schemas</h3>" +
       "<p class='fine'>Index scans: <b>" + s.indexScans +
       "</b> &middot; Natural + Sort: <b>" + s.naturalScans +
       "</b> &middot; <code>SET STATISTICS</code> runs: <b>" + s.statsRecomputed +
-      "</b> &middot; Statement cache hits: <b>" + s.stmtCacheHits + "</b></p>";
+      "</b> &middot; Statement cache hits: <b>" + s.stmtCacheHits + "</b></p>" +
+      "<p class='fine'>Firebird 5.0 <code>ParallelWorkers</code>: <b>" + (s.parallelWorkers || 1) +
+      "</b> &middot; Firebird 6.0 active schema: <b>" + (s.activeSchema || "PUBLIC") +
+      "</b> (<code>" + schemasTxt + "</code>)</p>";
     for (var i = 0; i < Math.min(6, s.tables.length); i++) {
       var t = s.tables[i];
+      var qn = t.qualifiedName || ("T" + i);
       var eff = Math.min(1, t.selectivity + t.statDrift);
-      var plan = eff < 0.12 ? "PLAN (T" + i + " INDEX)" : "PLAN (T" + i + " NATURAL) + SORT";
+      var plan = eff < 0.12 ? "PLAN (" + qn + " INDEX)" : "PLAN (" + qn + " NATURAL) + SORT";
       var cls = eff < 0.12 ? "ver-ok" : "ver-dead";
-      html += "<div class='chainrow " + cls + "'><span>T" + i + " (" +
+      html += "<div class='chainrow " + cls + "'><span>" + qn + " (" +
         eff.toFixed(3) + ")</span>" + plan +
         (t.statDrift > 0.02 ? " <em>(drift +" + t.statDrift.toFixed(2) + ")</em>" : "") +
         "</div>";
@@ -1632,8 +1662,8 @@ var UI = (function () {
          infoSelectedId === "replica") && !els.info.classList.contains("hidden")) {
       renderReplication(s);
     }
-    if ((infoSelectedId === "cmp" || infoSelectedId === "btr") &&
-        !els.info.classList.contains("hidden")) {
+    if ((infoSelectedId === "cmp" || infoSelectedId === "btr" ||
+         infoSelectedId === "met") && !els.info.classList.contains("hidden")) {
       renderOptimizer(s);
     }
     refreshActionLabels();

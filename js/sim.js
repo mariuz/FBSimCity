@@ -57,6 +57,13 @@ var Sim = (function () {
 
       // sweep
       sweepTimer: 0, sweepActive: false, sweepProgress: 0, sweepBlocked: false,
+      parallelWorkers: 1,    // Firebird 5.0 ParallelWorkers (1..4) for sweep & index builds
+      sweepWorkers: 1,       // active parallel sweep worker count on current run
+      sweepPageReads: 0,     // page reads driven by sweep workers
+      indexBuilds: 0,        // parallel index builds (CREATE INDEX / SET STATISTICS)
+      indexBuildWorkers: 0,  // workers used by last parallel index build
+      activeSchema: "PUBLIC",// Firebird 6.0 SQL schema search path (PUBLIC | APP | AUDIT)
+      schemas: ["PUBLIC", "APP", "AUDIT"],
 
       // run control
       paused: false, speed: 1,
@@ -161,11 +168,14 @@ var Sim = (function () {
       var baseSel = i < 8
         ? +(0.005 + i * 0.008).toFixed(3)
         : +(0.18 + (i - 8) * 0.08).toFixed(3);
+      var tblSchema = i < 4 ? "PUBLIC" : i < 8 ? "APP" : "AUDIT";
       s.tables.push({
         versions: 1, flash: 0, purgeFlash: 0, chain: [960 + i], gcFlag: false,
         lockHolder: null, waiters: [],
         selectivity: baseSel, statDrift: 0,
-        lastCommitCn: 960 + i
+        lastCommitCn: 960 + i,
+        schema: tblSchema,
+        qualifiedName: tblSchema + ".T" + i
       });
     }
     setCacheSize(s, s.cacheSize);
@@ -1267,12 +1277,40 @@ var Sim = (function () {
     s.sweepBlocked = false;
     s.sweepActive = true;
     s.sweepProgress = 0;
+    s.sweepWorkers = Math.max(1, Math.min(4, s.parallelWorkers || 1));
     var gap = s.ost - s.oit;
+    var wNote = s.sweepWorkers > 1 ? " with " + s.sweepWorkers + " parallel workers" : "";
     say(s, manual
-      ? "Sweep started: demolishing versions older than OST " + s.ost +
+      ? "Sweep started" + wNote + ": demolishing versions older than OST " + s.ost +
         " (OIT " + s.oit + ")."
-      : "Sweep started: OST − OIT gap reached " + gap +
+      : "Sweep started" + wNote + ": OST − OIT gap reached " + gap +
         " (OIT " + s.oit + " → OST " + s.ost + ").");
+  }
+
+  function sweepTable(s, i) {
+    var t = s.tables[i];
+    if (!t) return;
+    cacheAccess(s, false, i % 4);
+    s.sweepPageReads++;
+    if (t.versions > 1) {
+      // demolish all back-versions older than the Oldest Snapshot (OST);
+      // always keep the current head version (last entry in t.chain)
+      var head = t.chain[t.chain.length - 1];
+      var kept = [];
+      for (var j = 0; j < t.chain.length - 1; j++) {
+        if (t.chain[j] >= s.ost) kept.push(t.chain[j]);
+      }
+      kept.push(head);
+      var removed = t.versions - kept.length;
+      if (removed > 0) {
+        s.totalVersions -= removed;
+        s.purges += removed;
+        t.chain = kept;
+        t.versions = kept.length;
+        t.flash = 1;
+        t.purgeFlash = 1;
+      }
+    }
   }
 
   function tickSweep(s, dt) {
@@ -1285,28 +1323,21 @@ var Sim = (function () {
       }
     }
     if (!s.sweepActive) return;
-    var before = Math.floor(s.sweepProgress * TABLE_COUNT);
-    s.sweepProgress += dt / 4; // 4-second tour
-    var upto = Math.min(TABLE_COUNT, Math.floor(s.sweepProgress * TABLE_COUNT));
-    for (var i = before; i < upto; i++) {
-      var t = s.tables[i];
-      if (t.versions > 1) {
-        // demolish all back-versions older than the Oldest Snapshot (OST);
-        // always keep the current head version (last entry in t.chain)
-        var head = t.chain[t.chain.length - 1];
-        var kept = [];
-        for (var j = 0; j < t.chain.length - 1; j++) {
-          if (t.chain[j] >= s.ost) kept.push(t.chain[j]);
-        }
-        kept.push(head);
-        var removed = t.versions - kept.length;
-        if (removed > 0) {
-          s.totalVersions -= removed;
-          t.chain = kept;
-          t.versions = kept.length;
-          t.flash = 1;
-          t.purgeFlash = 1;
-        }
+    var w = Math.max(1, Math.min(4, s.sweepWorkers || s.parallelWorkers || 1));
+    var perWorker = Math.ceil(TABLE_COUNT / w);
+    var prevFrac = s.sweepProgress;
+    // Firebird 5.0 ParallelWorkers: N workers sweep relation partitions in parallel
+    s.sweepProgress += (dt / 4) * w;
+    var nextFrac = Math.min(1, s.sweepProgress);
+    for (var wi = 0; wi < w; wi++) {
+      var baseIdx = wi * perWorker;
+      var endIdx = Math.min(TABLE_COUNT, baseIdx + perWorker);
+      var count = endIdx - baseIdx;
+      if (count <= 0) continue;
+      var bStep = Math.floor(prevFrac * count);
+      var uStep = Math.min(count, Math.floor(nextFrac * count));
+      for (var k = bStep; k < uStep; k++) {
+        sweepTable(s, baseIdx + k);
       }
     }
     if (s.sweepProgress >= 1.05) {
@@ -1314,7 +1345,8 @@ var Sim = (function () {
       var sweptTo = s.ost;
       s.rolledBack = s.rolledBack.filter(function (tx) { return tx > sweptTo; });
       refreshMarkers(s);
-      say(s, "Sweep finished. OIT advanced to " + s.oit + ".");
+      say(s, "Sweep finished (" + w + " worker" + (w === 1 ? "" : "s") +
+        "). OIT advanced to " + s.oit + ".");
     }
   }
 
@@ -2067,6 +2099,13 @@ var Sim = (function () {
     var hasIndex = /\bindex\b/i.test(planStr);
     var hasSort = /\bsort\b/i.test(planStr);
     // Match both Firebird 5 ("TABLE") and Firebird 6 schema-qualified ("PUBLIC"."TABLE") plans
+    var schemaMatch = planStr.match(/Table\s+"([^"]+)"\."([^"]+)"/i) ||
+                      sqlStr.match(/\b(?:from|into|update)\s+"?([a-z0-9_$]+)"?\."?([a-z0-9_$]+)"?/i);
+    if (schemaMatch && schemaMatch[1]) {
+      var parsedSchema = schemaMatch[1].toUpperCase();
+      if (s.schemas.indexOf(parsedSchema) === -1) s.schemas.push(parsedSchema);
+      s.activeSchema = parsedSchema;
+    }
     var tblMatch = planStr.match(/Table\s+(?:"[^"]+"\.)?"([^"]+)"/i) ||
                    sqlStr.match(/\b(?:from|into|update)\s+(?:"?[a-z0-9_$]+"?\.)?"?([a-z0-9_$]+)"?/i);
     var tableIdx = pickTable(isUpdate);
@@ -2397,13 +2436,40 @@ var Sim = (function () {
     s.stmtCacheRatio = r;
   }
 
+  function setParallelWorkers(s, n) {
+    var w = Math.max(1, Math.min(4, Math.round(+n || 1)));
+    if (s.parallelWorkers === w) return;
+    s.parallelWorkers = w;
+    if (s.sweepActive) s.sweepWorkers = w;
+    say(s, "ParallelWorkers set to " + w +
+      (w > 1
+        ? " — sweep and index builds partition relations across " + w + " workers."
+        : " — single-worker sweep and index builds."));
+  }
+
+  function setActiveSchema(s, schema) {
+    var sc = String(schema || "PUBLIC").toUpperCase();
+    if (s.schemas.indexOf(sc) === -1) return;
+    if (s.activeSchema === sc) return;
+    s.activeSchema = sc;
+    say(s, "SET SEARCH_PATH TO " + sc + " (Firebird 6.0 SQL schema namespace).");
+  }
+
   function recomputeStatistics(s) {
+    var w = Math.max(1, Math.min(4, s.parallelWorkers || 1));
     for (var i = 0; i < TABLE_COUNT; i++) {
       s.tables[i].statDrift = 0;
     }
+    for (var wi = 0; wi < w; wi++) {
+      cacheAccess(s, false, wi % 4);
+    }
     s.statsRecomputed++;
-    say(s, "SET STATISTICS INDEX: recomputed RDB$STATISTICS across all " +
-      TABLE_COUNT + " tables.");
+    s.indexBuilds++;
+    s.indexBuildWorkers = w;
+    s.btrFlash = 1;
+    s.btrSplitFlash = 1;
+    say(s, "SET STATISTICS INDEX (" + w + " parallel worker" + (w === 1 ? "" : "s") +
+      "): recomputed RDB$STATISTICS across all " + TABLE_COUNT + " tables.");
   }
 
   function degradeStatistics(s) {
@@ -2537,6 +2603,8 @@ var Sim = (function () {
     enqueueWrite: enqueueWrite,
     flushWriteQueue: flushWriteQueue,
     ingestTelemetry: ingestTelemetry,
+    setParallelWorkers: setParallelWorkers,
+    setActiveSchema: setActiveSchema,
     recomputeStatistics: recomputeStatistics,
     degradeStatistics: degradeStatistics,
     setIsolationMode: setIsolationMode,

@@ -675,24 +675,31 @@ var Render = (function () {
         }));
       }
     }
-    // sweep truck
+    // sweep truck(s) (Firebird 5.0 ParallelWorkers = 1..4)
     if (s.sweepActive) {
       var g = FB.stations.gc, mm = FB.stations.mvcc;
       var p = s.sweepProgress;
-      var tx2, ty2;
-      if (p < 0.25) { // depot -> district
-        tx2 = g.x + (mm.x - g.x) * (p / 0.25);
-        ty2 = g.y + (mm.y - g.y) * (p / 0.25);
-      } else {        // tour the towers
-        var q = (p - 0.25) / 0.8;
-        tx2 = m.x + 1 + (m.w - 2) * (0.5 + 0.5 * Math.sin(q * Math.PI * 4));
-        ty2 = m.y + 1 + (m.d - 2) * Math.min(1, q);
+      var sw = Math.max(1, Math.min(4, s.sweepWorkers || s.parallelWorkers || 1));
+      var truckColors = ["#e8590c", "#f76707", "#fd7e14", "#ffa94d"];
+      for (var wi = 0; wi < sw; wi++) {
+        var tx2, ty2;
+        if (p < 0.25) { // depot -> district
+          var laneOff = (wi - (sw - 1) / 2) * 0.65;
+          tx2 = g.x + (mm.x - g.x) * (p / 0.25) + laneOff;
+          ty2 = g.y + (mm.y - g.y) * (p / 0.25);
+        } else {        // tour the worker's assigned tower partition
+          var q = Math.min(1, (p - 0.25) / 0.8);
+          var bandH = (m.d - 2) / sw;
+          var bandY = m.y + 1 + wi * bandH;
+          tx2 = m.x + 1 + (m.w - 2) * (0.5 + 0.5 * Math.sin((q + wi * 0.25) * Math.PI * 4));
+          ty2 = bandY + bandH * q;
+        }
+        list.push(boundsOf({
+          key: tx2 + ty2 + 0.8 + wi * 0.01, type: "box",
+          x: tx2, y: ty2, w: 0.9, d: 0.6, h: 0.55,
+          color: truckColors[wi % truckColors.length], glow: 0.85, b: null
+        }));
       }
-      list.push(boundsOf({
-        key: tx2 + ty2 + 0.8, type: "box",
-        x: tx2, y: ty2, w: 0.9, d: 0.6, h: 0.55,
-        color: "#e8590c", glow: 0.8, b: null
-      }));
     }
     // particles
     s.particles.forEach(function (q) {
@@ -850,7 +857,8 @@ var Render = (function () {
       }
       ctx.font = "600 " + (10 * Math.min(cam.zoom, 1.2)) + "px Consolas, monospace";
       ctx.fillStyle = T.labelStrong;
-      ctx.fillText("T" + activeTw + ": " + twObj.versions + " ver" +
+      var qn = twObj.qualifiedName || ("T" + activeTw);
+      ctx.fillText(qn + ": " + twObj.versions + " ver" +
         (deadCnt > 0 ? " (" + deadCnt + " GC-able)" : ""), twP[0], twP[1]);
     }
     // TIP counters over the Transaction Hall
